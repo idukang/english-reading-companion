@@ -235,15 +235,18 @@ object SherpaEngine {
                 provider = "cpu"
             )
         )
-        // assetManager 传 null：模型在 filesDir 里，走 newFromFile，才不会把绝对路径当 assets 打开。
-        val newRec = OfflineRecognizer(config = cfg)
+        // 先放掉旧识别器再建新的：两套 227MB 模型同时活着容易把低内存手机顶爆。
         val old = recognizer
-        recognizer = newRec
-        recognizerLang = lang
+        recognizer = null
+        recognizerLang = null
         try {
             old?.release()
         } catch (t: Throwable) {
         }
+        // assetManager 传 null：模型在 filesDir 里，走 newFromFile，才不会把绝对路径当 assets 打开。
+        val newRec = OfflineRecognizer(config = cfg)
+        recognizer = newRec
+        recognizerLang = lang
     }
 
     private fun unpackIfNeeded(ctx: Context, assetPath: String, dest: File) {
@@ -445,6 +448,8 @@ object SherpaEngine {
             val floats = FloatArray(WINDOW)
             var speechWindows = 0
             var echoFloor = 0.0f
+            var echoBaseline = -1f      // 每句朗读开头 250ms 测到的回声电平
+            var wasTtsSpeaking = false
             var voiceAnnounced = false
 
             while (running && loopSeq == myId) {
@@ -461,36 +466,49 @@ object SherpaEngine {
                 // ---------- 神经 VAD 打断 ----------
                 val speakingNow = ttsSpeaking
                 if (speakingNow) {
-                    val detected = try {
-                        v.isSpeechDetected()
-                    } catch (t: Throwable) {
-                        false
-                    }
-                    val aboveFloor = rms > max(ABS_RMS_FLOOR, echoFloor * 1.8f)
-                    if (detected && aboveFloor) {
-                        speechWindows++
-                    } else {
+                    val now = SystemClock.elapsedRealtime()
+                    if (!wasTtsSpeaking) {
+                        echoBaseline = -1f
                         speechWindows = 0
-                        if (!detected) {
-                            // 只在“没人说话”的窗口更新回声底噪，慢慢跟随机型音量
-                            echoFloor = if (echoFloor <= 0f) rms else echoFloor * 0.9f + rms * 0.1f
-                        }
                     }
-                    if (!bargedIn && speechWindows >= BARGE_WINDOWS &&
-                        SystemClock.elapsedRealtime() - ttsStartedAt >= BARGE_GUARD_MS
-                    ) {
-                        bargedIn = true
-                        ttsSpeaking = false
-                        val cut = ttsText
-                        Log.i(TAG, "barge-in after ${speechWindows} windows, rms=$rms floor=$echoFloor")
-                        try {
-                            listener?.onBargeIn(cut)
+                    if (now - ttsStartedAt < BARGE_GUARD_MS) {
+                        // 启动余量：这段里听到的多半是刚出声的回声，先量一个基线
+                        echoBaseline = if (echoBaseline < 0f) rms else echoBaseline * 0.8f + rms * 0.2f
+                        speechWindows = 0
+                    } else {
+                        // 没有回声消除的机型：门槛跟着刚才测到的回声电平走，
+                        // 只有明显比“自己的声音”更大的说话声才算插话。
+                        val floor = if (echoBaseline > 0f) max(ABS_RMS_FLOOR, echoBaseline * 1.5f)
+                        else max(ABS_RMS_FLOOR, echoFloor * 1.8f)
+                        val detected = try {
+                            v.isSpeechDetected()
                         } catch (t: Throwable) {
+                            false
+                        }
+                        if (detected && rms > floor) {
+                            speechWindows++
+                        } else {
+                            speechWindows = 0
+                            if (!detected) {
+                                // 没人说话的窗口，慢慢更新环境底噪
+                                echoFloor = if (echoFloor <= 0f) rms else echoFloor * 0.9f + rms * 0.1f
+                            }
+                        }
+                        if (!bargedIn && speechWindows >= BARGE_WINDOWS) {
+                            bargedIn = true
+                            ttsSpeaking = false
+                            val cut = ttsText
+                            Log.i(TAG, "barge-in after ${speechWindows} windows, rms=$rms floor=$floor")
+                            try {
+                                listener?.onBargeIn(cut)
+                            } catch (t: Throwable) {
+                            }
                         }
                     }
                 } else {
                     speechWindows = 0
                 }
+                wasTtsSpeaking = speakingNow
 
                 // ---------- 用户开口提示（给界面一个“在听你说”） ----------
                 if (!voiceAnnounced) {
