@@ -29,13 +29,19 @@
     <!-- ================= 书库 ================= -->
     <section class="view active" id="view-library">
       <div class="hero">
-        <div class="hero-title">每天十分钟，读一点英文</div>
+        <div class="hero-eyebrow">每天十分钟</div>
+        <div class="hero-title">读一点英文，开口说出来</div>
         <div class="hero-sub">点句子就读，点单词就查；读完有两道小问，读不懂可以问外教。</div>
         <div class="hero-chips">
           <span class="stat" id="statRead">已读 0 篇</span>
           <span class="stat" id="statWords">生词 0 个</span>
           <span class="stat" id="statOffline">完全离线</span>
         </div>
+      </div>
+
+      <div class="section-head">
+        <b>今天读什么</b>
+        <span>按年龄挑一组，点开就能读</span>
       </div>
 
       <div class="seg" id="tierSeg">
@@ -104,11 +110,8 @@
         </span>
         <span class="ear-switch" id="earSwitch"></span>
       </button>
-      <div class="ear-lang">
-        <button class="chip" data-lang="auto">中英自动</button>
-        <button class="chip" data-lang="en">🇺🇸 英文聊</button>
-        <button class="chip" data-lang="zh">🇨🇳 中文提问</button>
-        <span class="tiny ear-tip">离线识别，不联网也能用</span>
+      <div class="ear-note">
+        <span>🎙️ SenseVoice 中英混说 · 离线识别，不联网也能用</span>
       </div>
 
       <div class="stage-tiers" id="stageTiers">
@@ -129,17 +132,17 @@
     </section>
 
     <!-- ================= 聊天 ================= -->
-    <section class="view" id="view-chat">
-      <div data-stage data-compact="1" id="stageChat"></div>
-      <div class="chat-head" id="chatHead"></div>
-      <div class="chat-stream" id="chatStream"></div>
+    <section class="view chat-view" id="view-chat">
+      <div class="live-banner" id="liveBanner">
+        <div data-stage data-live="1" data-slim="1" id="stageChat"></div>
+      </div>
+      <div class="chat-stream" id="chatStream" aria-live="polite"></div>
       <div class="chat-dock">
         <div class="chat-tools" id="chatTools">
-          <button class="chip" id="btnEarChat">🎧 耳机连麦</button>
-          <button class="chip" id="btnLangChat" aria-label="语音识别：中英自动，点一下切换">🌐 中英自动</button>
-          <button class="chip" id="btnHint">💡 提示</button>
-          <button class="chip" id="btnRestart">🔄 重来</button>
-          <button class="chip" id="btnZhChat">中文对照</button>
+          <button class="dock-btn" id="btnEarChat">🎧 耳机连麦</button>
+          <button class="dock-btn" id="btnRestart">🔄 重来</button>
+          <button class="dock-btn" id="btnZhChat">译 中文</button>
+          <button class="dock-btn" id="btnHint">💡 提示</button>
         </div>
         <div class="speech-fallback hidden" id="speechFallback" aria-live="polite">
           <div class="sf-title" id="sfTitle">语音识别暂时用不了，换一种方式接着说：</div>
@@ -154,19 +157,22 @@
         <div class="chat-input">
           <button class="icon-btn mic" id="btnMic" aria-label="语音回答">🎙️</button>
           <textarea id="chatText" rows="1" placeholder="用英文回一句，或点🎙️ 说出来"></textarea>
-          <button class="btn primary" id="btnSend">发送</button>
+          <button class="btn primary send-btn" id="btnSend">发送</button>
         </div>
-        <div class="tiny center" id="chatHintLine"></div>
+        <div class="chat-hint" id="chatHintLine"></div>
       </div>
     </section>
 
     <!-- ================= 生词本 ================= -->
     <section class="view" id="view-vocab">
       <div class="vocab-head">
-        <div class="vocab-title"><b id="vocabCount">0</b> 个生词<span class="tiny" id="vocabMastered"></span></div>
-        <div class="row wrap">
-          <button class="chip" id="btnReview">🃏 卡片复习</button>
-          <button class="chip" id="btnShowMastered">显示已掌握</button>
+        <div class="vocab-head-main">
+          <div class="vocab-title"><b id="vocabCount">0</b><span>个生词</span><span class="tiny" id="vocabMastered"></span></div>
+          <div class="tiny">读书时点过的词都会收进来，随时抽卡复习。</div>
+        </div>
+        <div class="row vocab-actions">
+          <button class="btn primary small" id="btnReview">🃏 卡片复习</button>
+          <button class="btn small" id="btnShowMastered">显示已掌握</button>
         </div>
       </div>
       <div id="vocabList"></div>
@@ -255,8 +261,32 @@
         </div>
       </div>
 
+      <div class="card" id="speechCard">
+        <div class="card-head">
+          <h3>🗣️ 语音识别</h3>
+          <span class="pill ok">内置 · 离线</span>
+        </div>
+        <p class="hint">SenseVoiceSmall 一个模型同时听懂中文、英文和中英混说，Silero VAD 判断你什么时候说完——不用切换语言，说完自动出整句。</p>
+        <div class="field">
+          <div class="field-label">识别方式</div>
+          <div class="seg small" id="setLangSeg">
+            <button data-asr-lang="auto" class="active">中英混说</button>
+            <button data-asr-lang="zh">中文优先</button>
+            <button data-asr-lang="en">英文优先</button>
+          </div>
+          <p class="tiny">默认「中英混说」就够了：中文提问、英文回答都能听懂。</p>
+        </div>
+        <div class="status-row">
+          <span>模型状态</span>
+          <b id="asrStatus">正在准备…</b>
+        </div>
+      </div>
+
       <div class="card" id="aiSettings">
-        <h3>🤖 AI 自由外教（可选）</h3>
+        <div class="card-head">
+          <h3>🤖 AI 自由外教（可选）</h3>
+          <span class="pill">可选</span>
+        </div>
         <p class="hint">不填也能用：内置情景对话和读后问答完全离线、免费。填写你自己的接口后，可以和 AI 自由用英文聊天、问阅读里的问题。</p>
 
         <div class="field">
@@ -297,7 +327,7 @@
         <h3>关于与隐私</h3>
         <p>· 不含广告、不含统计埋点、不读取通讯录和短信，只申请麦克风权限（跟读与语音回答时使用）。</p>
         <p>· 书库、离线词库、情景对话全部打包在安装包里，飞行模式也能正常使用。</p>
-        <p>· 语音识别用的是打包在安装包里的 Vosk 离线模型（英文 + 中文），语音不会离开手机；系统 TTS 朗读同样在本机完成。</p>
+        <p>· 语音识别用的是打包在安装包里的 SenseVoiceSmall + Silero VAD 离线模型，中英混说都能听懂，语音不会离开手机；系统 TTS 朗读同样在本机完成。</p>
         <p>· 「耳机后台连麦」会在前台放一条通知（这是系统要求，否则熄屏后麦克风会被收回）；点通知上的「结束对话」即可停止。</p>
         <p>· 只有两种情况会联网：你主动点“联网查词”，或你自己配置了 AI 接口并主动发消息。你填的接口地址和密钥只保存在本机，只发送到你填写的那个地址。</p>
         <p>· 生词本、已读进度、学习设置都保存在本机，卸载即清除。</p>

@@ -22,7 +22,7 @@ import android.os.PowerManager
  *  · 前台服务 + 常驻通知（可一键结束对话）
  *  · PARTIAL_WAKE_LOCK：熄屏后 CPU 继续跑 Vosk 和 TTS
  *  · 音频焦点：像通话一样占用媒体焦点，别的 App 不会突然出声打断
- * 识别和朗读本身分别在 VoskEngine 与 MainActivity 里，这里只负责“别被系统收走”。
+ * 识别和朗读本身分别在 SherpaEngine 与 MainActivity 里，这里只负责“别被系统收走”。
  */
 class VoiceCompanionService : Service() {
 
@@ -86,8 +86,8 @@ class VoiceCompanionService : Service() {
         acquireWakeLock()
         acquireFocus()
 
-        val lang = intent?.getStringExtra(EXTRA_LANG) ?: VoskEngine.MODE_AUTO
-        VoskEngine.setLanguageMode(lang)
+        val lang = intent?.getStringExtra(EXTRA_LANG) ?: SherpaEngine.MODE_AUTO
+        SherpaEngine.setLanguageMode(lang)
         notifyJs("active", "")
         return START_NOT_STICKY
     }
@@ -102,7 +102,7 @@ class VoiceCompanionService : Service() {
         isActive = false
         releaseFocus()
         releaseWakeLock()
-        VoskEngine.stopListening()
+        SherpaEngine.stopListening()
         notifyJs("stopped", "")
         super.onDestroy()
     }
@@ -178,11 +178,11 @@ class VoiceCompanionService : Service() {
     private fun onFocusChange(change: Int) {
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
-                VoskEngine.stopListening()
+                SherpaEngine.stopListening()
                 notifyJs("focus-lost", "别的应用抢走了声音，对话已暂停")
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                VoskEngine.stopListening()
+                SherpaEngine.stopListening()
                 notifyJs("paused", "有来电或别的应用在播放，先暂停听你说")
             }
             AudioManager.AUDIOFOCUS_GAIN -> notifyJs("focus-gain", "")

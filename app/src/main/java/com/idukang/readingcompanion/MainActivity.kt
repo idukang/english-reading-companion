@@ -36,12 +36,12 @@ import java.util.Locale
  * Kotlin 这层负责本机能力：
  *   1. 系统 TTS 朗读（中英混排会自动分段，中文用中文语音、英文用英文语音）
  *   2. 麦克风录音与回放（跟读对比）
- *   3. 离线语音识别（Vosk，中英双语；可后台、可边说边听、可打断）
+ *   3. 离线语音识别（SenseVoice + Silero VAD，中英混说；可后台、可边说边听、可打断）
  *   4. 耳机后台连麦的前台服务（VoiceCompanionService）
  *   5. 状态栏配色
  * 不联网、不上报、无统计 SDK。
  */
-class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listener {
+class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Listener {
 
     companion object {
         private const val REQ_AUDIO = 1001
@@ -80,7 +80,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
     private var recordStartAt = 0L
     private var player: MediaPlayer? = null
 
-    // ---------- 系统语音识别（Vosk 不可用时的兜底） ----------
+    // ---------- 系统语音识别（内置离线模型不可用时的兜底） ----------
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
     private var pendingListenStart: Runnable? = null
@@ -90,8 +90,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
 
     private var pendingRecordAfterPermission = false
     private var pendingSpeechAfterPermission = false
-    private var pendingVoskAfterPermission = false
-    private var pendingVoskBargeIn = false
+    private var pendingAsrAfterPermission = false
+    private var pendingAsrBargeIn = false
     private var pendingServiceLang: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -140,9 +140,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
 
         // 离线语音：先挂上监听，并在启动时就把中英两套模型一起热起来。
         // 之前只在进对话页时才载入，用户第一句话常常只有英文识别器在工作，中文会被听成英文。
-        VoskEngine.attach(this)
-        VoskEngine.setCallback(this)
-        VoskEngine.warmup(applicationContext)
+        SherpaEngine.attach(this)
+        SherpaEngine.setCallback(this)
+        SherpaEngine.warmup(applicationContext)
 
         try {
             tts = TextToSpeech(this, this)
@@ -178,7 +178,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
                     main.post {
                         val job = ttsJobId ?: return@post
                         if (!id.startsWith("$job#")) return@post
-                        VoskEngine.noteTtsStart(currentSegmentText())
+                        SherpaEngine.noteTtsStart(currentSegmentText())
                         if (!ttsStartSent) {
                             ttsStartSent = true
                             emit("window.Native && window.Native.onSpeakStart && window.Native.onSpeakStart(${jsStr(job)})")
@@ -200,7 +200,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
 
                 override fun onStop(utteranceId: String?, interrupted: Boolean) {
                     // 主动 stop 时 ttsJobId 已经被清空；这里只兜底清理状态
-                    main.post { if (ttsJobId == null) VoskEngine.noteTtsEnd() }
+                    main.post { if (ttsJobId == null) SherpaEngine.noteTtsEnd() }
                 }
 
                 override fun onError(utteranceId: String?) {
@@ -356,7 +356,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
         ttsSegIndex = 0
         ttsStartSent = false
         ttsCurrentZh = false
-        VoskEngine.noteTtsEnd()
+        SherpaEngine.noteTtsEnd()
         if (job != null) {
             if (error) {
                 emit("window.Native && window.Native.onSpeakError && window.Native.onSpeakError(${jsStr(job)})")
@@ -374,7 +374,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
         ttsSegIndex = 0
         ttsStartSent = false
         ttsCurrentZh = false
-        VoskEngine.noteTtsEnd()
+        SherpaEngine.noteTtsEnd()
         try {
             tts?.stop()
         } catch (e: Exception) {
@@ -388,22 +388,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
     }
 
     // ================================================================
-    // Vosk 回调
+    // Sherpa-ONNX 离线语音回调
     // ================================================================
 
-    override fun onVoskState(state: String, msg: String) {
+    override fun onAsrState(state: String, msg: String) {
         emit(
-            "window.Native && window.Native.onVoskState && window.Native.onVoskState(" +
+            "window.Native && window.Native.onAsrState && window.Native.onAsrState(" +
                 jsStr(state) + "," + jsStr(msg) + ")"
         )
     }
 
-    override fun onSpeechPartial(text: String, lang: String) {
-        emit(
-            "window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(" +
-                jsStr(text) + ",false," + jsStr(lang) + ")"
-        )
-    }
 
     override fun onSpeechFinal(text: String, lang: String) {
         emit(
@@ -818,9 +812,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
                 pendingSpeechAfterPermission = false
                 doStartListening()
             }
-            if (pendingVoskAfterPermission) {
-                pendingVoskAfterPermission = false
-                VoskEngine.startListening(pendingVoskBargeIn)
+            if (pendingAsrAfterPermission) {
+                pendingAsrAfterPermission = false
+                SherpaEngine.startListening(pendingAsrBargeIn)
             }
             val lang = pendingServiceLang
             if (lang != null) {
@@ -830,7 +824,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
         } else {
             pendingRecordAfterPermission = false
             pendingSpeechAfterPermission = false
-            pendingVoskAfterPermission = false
+            pendingAsrAfterPermission = false
             pendingServiceLang = null
             emit("window.Native && window.Native.onPermissionResult && window.Native.onPermissionResult('RECORD_AUDIO',false)")
             emit("window.Native && window.Native.onVoiceService && window.Native.onVoiceService('error','没有麦克风权限，耳机模式用不了')")
@@ -932,49 +926,49 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
             main.post { cancelTtsJob() }
         }
 
-        // ---------- 离线语音（Vosk） ----------
+        // ---------- 离线语音（SenseVoice + Silero VAD） ----------
 
         @JavascriptInterface
-        fun hasVosk(): Boolean = VoskEngine.hasEnglishModel(this@MainActivity)
+        fun hasAsr(): Boolean = SherpaEngine.hasModel(this@MainActivity)
 
         @JavascriptInterface
-        fun hasVoskChinese(): Boolean = VoskEngine.hasChineseModel(this@MainActivity)
+        fun hasAsrChinese(): Boolean = SherpaEngine.hasModel(this@MainActivity)
 
         @JavascriptInterface
-        fun isVoskReady(): Boolean = VoskEngine.isReady()
+        fun isAsrReady(): Boolean = SherpaEngine.isReady()
 
         @JavascriptInterface
-        fun prepareVosk() {
-            main.post { VoskEngine.prepare(applicationContext) }
+        fun prepareAsr() {
+            main.post { SherpaEngine.prepare(applicationContext) }
         }
 
         @JavascriptInterface
-        fun setVoskLanguage(mode: String) {
-            VoskEngine.setLanguageMode(mode)
+        fun setAsrLanguage(mode: String) {
+            SherpaEngine.setLanguageMode(mode)
         }
 
         @JavascriptInterface
-        fun startVoskListen(bargeIn: Boolean): Boolean {
+        fun startAsrListen(bargeIn: Boolean): Boolean {
             val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
-                pendingVoskAfterPermission = true
-                pendingVoskBargeIn = bargeIn
+                pendingAsrAfterPermission = true
+                pendingAsrBargeIn = bargeIn
                 main.post {
                     emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('permission','正在请求麦克风权限…')")
                     requestAudioPermissions()
                 }
                 return true
             }
-            return VoskEngine.startListening(bargeIn)
+            return SherpaEngine.startListening(bargeIn)
         }
 
         @JavascriptInterface
-        fun stopVoskListen() {
-            VoskEngine.stopListening()
+        fun stopAsrListen() {
+            SherpaEngine.stopListening()
         }
 
         @JavascriptInterface
-        fun isVoskListening(): Boolean = false
+        fun isAsrListening(): Boolean = false
 
         // ---------- 耳机后台连麦服务 ----------
 
@@ -1225,8 +1219,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
             }
         } catch (e: Exception) {
         }
-        VoskEngine.setCallback(null)
-        VoskEngine.shutdown()
+        SherpaEngine.setCallback(null)
+        SherpaEngine.shutdown()
         try {
             if (recording) {
                 recorder?.release()

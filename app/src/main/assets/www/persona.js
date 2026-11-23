@@ -145,8 +145,16 @@ const Stage = {
     return PERSONAS[this.personaId] || PERSONAS.kids;
   },
 
-  html: function (compact) {
+  html: function (compact, slim) {
     const p = this.persona();
+    if (slim) {
+      return '<div class="stage-face">' + p.svg + "</div>" +
+        '<div class="stage-meta">' +
+          '<div class="stage-badge"><i class="dot"></i><span class="badge-text"></span></div>' +
+          '<div class="stage-live-note">SenseVoice 离线识别 · 中英混说 · 说完自动接话</div>' +
+        "</div>" +
+        '<div class="stage-confetti"></div>';
+    }
     return '<div class="stage-arm">' +
         '<span class="wave w1"></span><span class="wave w2"></span><span class="wave w3"></span>' +
       "</div>" +
@@ -168,9 +176,10 @@ const Stage = {
       host.classList.add("stage");
       host.setAttribute("data-persona", self.personaId);
       if (host.dataset.compact === "1") host.classList.add("compact");
+      if (host.dataset.slim === "1") host.classList.add("slim");
       host.style.setProperty("--persona", self.persona().color);
       host.style.setProperty("--persona-soft", self.persona().soft);
-      host.innerHTML = self.html(host.dataset.compact === "1");
+      host.innerHTML = self.html(host.dataset.compact === "1", host.dataset.slim === "1");
       self.hosts.push(host);
     });
     this.applyState(this.state);
@@ -196,7 +205,8 @@ const Stage = {
       const badge = host.querySelector(".badge-text");
       if (badge) {
         const p = self.persona();
-        badge.textContent = text || (p.status[state] || p.status.idle);
+        const live = host.dataset.live === "1" && window.Live;
+        badge.textContent = text || (live ? window.Live.pill(state) : (p.status[state] || p.status.idle));
       }
       if (state === "happy") self.burst(host);
     });

@@ -11,8 +11,13 @@ android {
         applicationId = "com.idukang.readingcompanion"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.1.1"
+        versionCode = 5
+        versionName = "1.2.0"
+
+        // 只打包手机常用的两种架构：x86/x86_64 是模拟器用的，打进来只会让包更大
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {
@@ -54,7 +59,7 @@ android {
         buildConfig = true
     }
 
-    // JNA 需要把 .so 解压到 nativeLibraryDir 才能 System.loadLibrary("vosk")，
+    // sherpa-onnx 的 JNI 库需要落到 nativeLibraryDir 才能 System.loadLibrary，
     // 所以这里用传统打包方式（extractNativeLibs=true）。
     packaging {
         jniLibs {
@@ -64,8 +69,8 @@ android {
 }
 
 dependencies {
-    // 唯一的一组第三方依赖：离线语音识别（Vosk）。
+    // 唯一的第三方依赖：Sherpa-ONNX 离线语音（SenseVoiceSmall + Silero VAD）。
+    // AAR 不进仓库，由 scripts/ci-build.sh（或本地构建）下载到 app/libs/。
     // 本地运行、不联网、不上报；模型文件打包在 assets 里。
-    implementation("com.alphacephei:vosk-android:0.3.47")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    implementation(files("libs/sherpa-onnx-2.0.3.aar"))
 }

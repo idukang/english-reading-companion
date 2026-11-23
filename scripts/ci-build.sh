@@ -2,8 +2,8 @@
 # =============================================================================
 # 英语陪读 —— GitHub Actions 自建构建脚本
 # 在 ubuntu-latest 上从零准备好 JDK 17 / Android SDK / Gradle 8.7，
-# 下载 Vosk 离线语音模型（英文 + 中文）打进 assets，
-# 生成 Release APK 与校验文件，并发布到 Release v1.1.1。
+# 下载 SenseVoice + Silero VAD 离线语音模型打进 assets，
+# 生成 Release APK 与校验文件，并发布到 Release v1.2.0。
 # 这样做的原因：workflow 文件只需要一行 `bash scripts/ci-build.sh`，
 # 构建逻辑放在普通文件里，后续调整不用改 workflow。
 # =============================================================================
@@ -121,44 +121,59 @@ fi
 "${GRADLE_BIN}" --version
 
 
-# ------------------------------------------------------- 离线语音模型 -----
-# 模型不进仓库（每个 40MB 左右），构建时下载并塞进 assets。
-# 解包后必须让 am/ conf/ graph/ ivector/ 直接位于 model-en-us/、model-cn/ 之下。
-MODEL_EN_DIR="app/src/main/assets/model-en-us"
-MODEL_ZH_DIR="app/src/main/assets/model-cn"
+# -------------------------------------------- 离线语音（Sherpa-ONNX） -----
+# AAR 与模型都不进仓库：构建时下载。
+#   · sherpa-onnx-2.0.3.aar          → app/libs/
+#   · SenseVoiceSmall int8 2025-09-09 → assets/sense-voice/{model.int8.onnx,tokens.txt}
+#   · silero_vad_v4.onnx              → assets/silero_vad_v4.onnx
+mkdir -p app/libs
+SHERPA_AAR="app/libs/sherpa-onnx-2.0.3.aar"
+if [ ! -s "${SHERPA_AAR}" ]; then
+  echo "下载 sherpa-onnx AAR"
+  curl -fL --retry 3 --retry-delay 2 -o "${SHERPA_AAR}" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.3/sherpa-onnx-2.0.3.aar"
+fi
+if [ ! -s "${SHERPA_AAR}" ]; then
+  echo "::error::sherpa-onnx AAR 下载失败"
+  exit 1
+fi
+echo "sherpa AAR：$(du -h "${SHERPA_AAR}" | cut -f1)"
 
-fetch_model() {
-  local url="$1"
-  local dir="$2"
-  local name="$3"
-  if [ -d "${dir}/am" ] && [ -d "${dir}/conf" ]; then
-    echo "离线语音模型已存在：${name}"
-    return 0
+SV_DIR="app/src/main/assets/sense-voice"
+if [ ! -s "${SV_DIR}/model.int8.onnx" ] || [ ! -s "${SV_DIR}/tokens.txt" ]; then
+  echo "下载 SenseVoiceSmall int8 模型"
+  curl -fL --retry 3 --retry-delay 2 -o /tmp/sensevoice.tar.bz2 \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
+  rm -rf /tmp/sv-unpack && mkdir -p /tmp/sv-unpack
+  if ! tar -xjf /tmp/sensevoice.tar.bz2 -C /tmp/sv-unpack 2>/dev/null; then
+    echo "tar 解 bz2 失败，改用 python3"
+    python3 -c "import tarfile;tarfile.open('/tmp/sensevoice.tar.bz2','r:bz2').extractall('/tmp/sv-unpack')"
   fi
-  echo "下载离线语音模型：${name}"
-  curl -fL --retry 3 --retry-delay 2 -o /tmp/vosk-model.zip "${url}"
-  rm -rf /tmp/vosk-unpack && mkdir -p /tmp/vosk-unpack
-  unzip -q -o /tmp/vosk-model.zip -d /tmp/vosk-unpack
-  local src
-  src="$(find /tmp/vosk-unpack -mindepth 1 -maxdepth 1 -type d | head -1)"
-  if [ -z "${src}" ]; then
-    echo "::error::模型 ${name} 解包失败"
+  SRC="$(find /tmp/sv-unpack -name model.int8.onnx -printf '%h\n' | head -1)"
+  if [ -z "${SRC}" ]; then
+    echo "::error::SenseVoice 模型解包失败"
     exit 1
   fi
-  rm -rf "${dir}" && mkdir -p "${dir}"
-  cp -R "${src}/." "${dir}/"
-  rm -f /tmp/vosk-model.zip
-  for sub in am conf graph; do
-    if [ ! -d "${dir}/${sub}" ]; then
-      echo "::error::模型 ${name} 目录不完整：缺少 ${sub}"
-      exit 1
-    fi
-  done
-  echo "模型 ${name} 就绪：$(du -sh "${dir}" | cut -f1)"
-}
+  mkdir -p "${SV_DIR}"
+  cp "${SRC}/model.int8.onnx" "${SRC}/tokens.txt" "${SV_DIR}/"
+  rm -f /tmp/sensevoice.tar.bz2
+fi
+if [ ! -s "${SV_DIR}/model.int8.onnx" ] || [ ! -s "${SV_DIR}/tokens.txt" ]; then
+  echo "::error::SenseVoice 模型不完整"
+  exit 1
+fi
+echo "SenseVoice 模型：$(du -sh "${SV_DIR}" | cut -f1)"
 
-fetch_model "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip" "${MODEL_EN_DIR}" "英文 small-en-us-0.15"
-fetch_model "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip" "${MODEL_ZH_DIR}" "中文 small-cn-0.22"
+VAD_FILE="app/src/main/assets/silero_vad_v4.onnx"
+if [ ! -s "${VAD_FILE}" ]; then
+  echo "下载 Silero VAD v4"
+  curl -fL --retry 3 --retry-delay 2 -o "${VAD_FILE}" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v4.onnx"
+fi
+if [ ! -s "${VAD_FILE}" ]; then
+  echo "::error::Silero VAD 模型下载失败"
+  exit 1
+fi
 
 echo "::group::assets 体积"
 du -sh app/src/main/assets/* 2>/dev/null || true
@@ -166,7 +181,7 @@ echo "::endgroup::"
 
 # ----------------------------------------------------------------- 编译 -----
 mkdir -p dist
-APK_OUT="dist/EnglishReadingCompanion-v1.1.1.apk"
+APK_OUT="dist/EnglishReadingCompanion-v1.2.0.apk"
 
 if [ -n "${KEYSTORE_BASE64:-}" ] && [ -n "${KEYSTORE_PASSWORD:-}" ]; then
   echo "检测到正式签名 Secrets，编译正式签名 Release APK"
@@ -199,7 +214,7 @@ if [ ! -f "${APK_SRC}" ]; then
 fi
 
 cp "${APK_SRC}" "${APK_OUT}"
-( cd dist && sha256sum "EnglishReadingCompanion-v1.1.1.apk" > SHA256SUMS.txt )
+( cd dist && sha256sum "EnglishReadingCompanion-v1.2.0.apk" > SHA256SUMS.txt )
 
 echo "::group::构建产物"
 ls -lh dist
@@ -212,11 +227,11 @@ if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
     echo "::error::runner 上没有 gh CLI"
     exit 1
   fi
-  gh release view v1.1.1 >/dev/null 2>&1 \
-    || gh release create v1.1.1 --title "英语陪读 v1.1.1" --notes-file RELEASE_NOTES.md
-  gh release upload v1.1.1 "${APK_OUT}" dist/SHA256SUMS.txt --clobber
+  gh release view v1.2.0 >/dev/null 2>&1 \
+    || gh release create v1.2.0 --title "英语陪读 v1.2.0" --notes-file RELEASE_NOTES.md
+  gh release upload v1.2.0 "${APK_OUT}" dist/SHA256SUMS.txt --clobber
   echo "::group::Release"
-  gh release view v1.1.1 --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
+  gh release view v1.2.0 --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
   echo "::endgroup::"
 else
   echo "非 main 分支，跳过 Release 发布"

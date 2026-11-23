@@ -270,8 +270,8 @@
       p.ok(code, body);
     },
 
-    onVoskState: function (state, msg) {
-      Ear.onVosk(state, msg);
+    onAsrState: function (state, msg) {
+      Ear.onAsr(state, msg);
     },
 
     onVoiceService: function (state, msg) {
@@ -513,20 +513,20 @@
 
   /* ========================= 语音识别 ========================= */
 
-  function preloadVosk() {
-    if (Bridge && Bridge.prepareVosk) {
-      try { Bridge.prepareVosk(); } catch (e) {}
+  function preloadAsr() {
+    if (Bridge && Bridge.prepareAsr) {
+      try { Bridge.prepareAsr(); } catch (e) {}
     }
   }
 
-  const VoskASR = {
+  const OfflineASR = {
     available: function () {
-      if (!Bridge || !Bridge.hasVosk) return false;
-      try { return !!Bridge.hasVosk(); } catch (e) { return false; }
+      if (!Bridge || !Bridge.hasAsr) return false;
+      try { return !!Bridge.hasAsr(); } catch (e) { return false; }
     },
     ready: function () {
-      if (!Bridge || !Bridge.isVoskReady) return false;
-      try { return !!Bridge.isVoskReady(); } catch (e) { return false; }
+      if (!Bridge || !Bridge.isAsrReady) return false;
+      try { return !!Bridge.isAsrReady(); } catch (e) { return false; }
     }
   };
 
@@ -540,7 +540,7 @@
     failMsg: "",
 
     available: function () {
-      if (VoskASR.available()) return true;
+      if (OfflineASR.available()) return true;
       if (!Bridge) return false;
       try {
         return Bridge.isSpeechAvailable ? !!Bridge.isSpeechAvailable() : true;
@@ -555,15 +555,15 @@
         return;
       }
       // 优先用打包在安装包里的离线识别（不依赖系统语音服务，中英都能听）
-      if (VoskASR.available()) {
+      if (OfflineASR.available()) {
         this.cb = opts.onText || null;
         this.live = opts.input || null;
         this.failed = false;
         this.failMsg = "";
-        if (Bridge.prepareVosk) { try { Bridge.prepareVosk(); } catch (e) {} }
+        if (Bridge.prepareAsr) { try { Bridge.prepareAsr(); } catch (e) {} }
         Sf.hide();
         try {
-          Bridge.startVoskListen(false);
+          Bridge.startAsrListen(false);
           this.listening = true;
           this.button(true);
           if (currentView === "chat") {
@@ -591,7 +591,7 @@
     },
 
     stop: function () {
-      if (Bridge && Bridge.stopVoskListen) { try { Bridge.stopVoskListen(); } catch (e) {} }
+      if (Bridge && Bridge.stopAsrListen) { try { Bridge.stopAsrListen(); } catch (e) {} }
       if (Bridge && Bridge.stopListening) { try { Bridge.stopListening(); } catch (e) {} }
       this.listening = false;
       this.dialog = false;
@@ -691,22 +691,22 @@
     }
   };
 
-  /* ================= 耳机后台连麦（离线 Vosk + 前台服务） ================= */
+  /* ================= 耳机后台连麦（SenseVoice + 前台服务） ================= */
 
   const Ear = {
     on: false,
     starting: false,
     active: false,
-    voskReady: false,
+    asrReady: false,
     zhReady: false,
     langMode: "auto",
     listening: false,
     interrupted: false,
     onceCb: null,
 
-    LANG_NAMES: { auto: "中英自动", zh: "中文优先", en: "英文优先" },
-    LANG_LABEL: { auto: "🌐 中英自动", zh: "🇨🇳 中文", en: "🇺🇸 英文" },
-    LANG_TIP: { auto: "中英文都能说", zh: "直接说中文提问", en: "直接说英文就行" },
+    LANG_NAMES: { auto: "中英混说", zh: "中文优先", en: "英文优先" },
+    LANG_LABEL: { auto: "🌐 中英混说", zh: "🇨🇳 中文", en: "🇺🇸 英文" },
+    LANG_TIP: { auto: "中文英文混着说都行", zh: "直接说中文提问", en: "直接说英文就行" },
 
     modeName: function () { return this.LANG_NAMES[this.langMode] || "中英自动"; },
     modeTip: function () { return this.LANG_TIP[this.langMode] || "中英文都能说"; },
@@ -716,12 +716,12 @@
       if (currentView !== "chat") return;
       const line = $("chatHintLine");
       if (!line) return;
-      line.textContent = "离线语音已就绪（" + this.modeName() + "）· " + this.modeTip();
+      line.textContent = "🟢 语音已就绪 · " + this.modeName() + " · " + this.modeTip();
     },
 
     supported: function () {
       if (!Bridge || !Bridge.startVoiceService) return false;
-      try { return !!(Bridge.hasVosk && Bridge.hasVosk()); } catch (e) { return false; }
+      try { return !!(Bridge.hasAsr && Bridge.hasAsr()); } catch (e) { return false; }
     },
 
     load: function () {
@@ -733,7 +733,7 @@
       this.langMode = (mode === "zh" || mode === "en") ? mode : "auto";
       LS.set("erc.earLang", this.langMode);
       // 立刻告诉原生层：选“中文”之后 100% 走中文识别器
-      if (Bridge && Bridge.setVoskLanguage) { try { Bridge.setVoskLanguage(this.langMode); } catch (e) {} }
+      if (Bridge && Bridge.setAsrLanguage) { try { Bridge.setAsrLanguage(this.langMode); } catch (e) {} }
       this.render();
       if (currentView === "chat") {
         $("chatHintLine").textContent = "已切到" + this.modeName() + " · " + this.modeTip();
@@ -764,7 +764,7 @@
       const sub = $("earSub");
       if (sub) {
         sub.textContent = this.on
-          ? (this.active ? "熄屏也能说 · 随时打断 · 中文提问也懂 · 点一下结束" : "正在准备离线语音…")
+          ? (this.active ? "熄屏也能说 · 开口就能打断 · 中英混说 · 点一下结束" : "正在准备离线语音…")
           : "像打电话一样聊：熄屏、切到别的应用都能说，随时可以打断，中文提问也听得懂";
       }
       const sw = $("earSwitch");
@@ -777,13 +777,8 @@
         chat.classList.toggle("on", this.on);
         chat.textContent = this.on ? "🎧 连麦中" : "🎧 耳机连麦";
       }
-      const langBtn = $("btnLangChat");
-      if (langBtn) {
-        langBtn.textContent = this.LANG_LABEL[this.langMode] || this.LANG_LABEL.auto;
-        langBtn.classList.toggle("on", this.langMode !== "auto");
-        langBtn.setAttribute("aria-label", "语音识别：" + this.modeName() + "，点一下切换");
-      }
       document.body.classList.toggle("ear-on", this.on);
+      if (typeof Live !== "undefined") Live.render();
     },
 
     toggle: function () {
@@ -797,7 +792,7 @@
         toast("这个安装包没有离线语音模型，先用打字或系统语音");
         return;
       }
-      if (Bridge.prepareVosk) { try { Bridge.prepareVosk(); } catch (e) {} }
+      if (Bridge.prepareAsr) { try { Bridge.prepareAsr(); } catch (e) {} }
       this.starting = true;
       this.on = true;
       this.render();
@@ -820,7 +815,7 @@
       this.onceCb = null;
       this.interrupted = false;
       TTS.stop();
-      try { if (Bridge && Bridge.stopVoskListen) Bridge.stopVoskListen(); } catch (e) {}
+      try { if (Bridge && Bridge.stopAsrListen) Bridge.stopAsrListen(); } catch (e) {}
       try { if (Bridge && Bridge.stopVoiceService) Bridge.stopVoiceService(); } catch (e) {}
       this.render();
       if (!quiet) toast("耳机连麦已关闭");
@@ -862,10 +857,12 @@
       }
     },
 
-    onVosk: function (state, msg) {
+    onAsr: function (state, msg) {
       if (state === "ready") {
-        this.voskReady = true;
+        this.asrReady = true;
         this.readyHint();
+        if ($("asrStatus")) $("asrStatus").textContent = "已就绪 · 中英混说";
+        Live.render();
       } else if (state === "ready-zh") {
         this.zhReady = true;
         if (currentView === "chat" && this.langMode !== "en") this.readyHint();
@@ -873,6 +870,13 @@
         this.zhReady = false;
       } else if (state === "loading") {
         if (currentView === "chat") $("chatHintLine").textContent = "正在准备离线语音…";
+        if ($("asrStatus")) $("asrStatus").textContent = "正在准备…";
+      } else if (state === "speech") {
+        if (currentView === "chat" && !Ear.interrupted) {
+          $("chatHintLine").textContent = "在听你说…说完自动接话";
+          Stage.listen();
+        }
+        Live.render();
       } else if (state === "listening") {
         this.listening = true;
         ASR.button(true);
@@ -881,7 +885,8 @@
         this.listening = false;
         ASR.button(false);
       } else if (state === "error") {
-        this.voskReady = false;
+        this.asrReady = false;
+        if ($("asrStatus")) $("asrStatus").textContent = "不可用";
         if (this.on) {
           toast(msg || "离线语音出错，先用打字");
         } else if (currentView === "chat") {
@@ -895,19 +900,19 @@
       if (!this.on) return;
       this.listening = true;
       this.interrupted = false;
-      try { if (Bridge && Bridge.startVoskListen) Bridge.startVoskListen(true); } catch (e) {}
+      try { if (Bridge && Bridge.startAsrListen) Bridge.startAsrListen(true); } catch (e) {}
     },
 
     relax: function () {
       if (!this.on) return;
       this.listening = true;
-      try { if (Bridge && Bridge.startVoskListen) Bridge.startVoskListen(false); } catch (e) {}
+      try { if (Bridge && Bridge.startAsrListen) Bridge.startAsrListen(false); } catch (e) {}
       Stage.listen();
     },
 
     listenOnce: function (cb) {
       this.onceCb = cb || null;
-      try { if (Bridge && Bridge.startVoskListen) Bridge.startVoskListen(false); } catch (e) {}
+      try { if (Bridge && Bridge.startAsrListen) Bridge.startAsrListen(false); } catch (e) {}
     },
 
     onPartial: function (text, lang) {
@@ -942,6 +947,32 @@
       Chat.onBargeIn(text);
     }
   };
+
+  /* ================= 对话页顶部那条「现在是什么状态」 ================= */
+
+  const Live = {
+    /** 一个清楚的状态胶囊：待命 / 在听 / 正在说 / 后台连麦 */
+    pill: function (state) {
+      if (Ear.starting && !Ear.active) return "⏳ 连麦启动中…";
+      if (state === "speaking") return "🔊 正在说 · 开口可打断";
+      if (Ear.on) {
+        if (Ear.starting) return "⏳ 连麦启动中…";
+        if (Ear.active && !Ear.listening) return "🎧 后台连麦中 · 点一下结束";
+        return "👂 在听你说 · 说完自动接话";
+      }
+      if (state === "listening") return "👂 在听你说 · 中英混说";
+      if (state === "thinking") return "💭 正在想…";
+      return "🟢 随时开口说（中英混说）";
+    },
+
+    render: function () {
+      document.querySelectorAll('[data-stage][data-live="1"]').forEach(function (host) {
+        const badge = host.querySelector(".badge-text");
+        if (badge) badge.textContent = Live.pill((typeof Stage !== "undefined" && Stage.state) || "idle");
+      });
+    }
+  };
+  window.Live = Live;
 
   /* ========================= 句子渲染 ========================= */
 
@@ -995,6 +1026,7 @@
       $(VIEWS[k]).classList.toggle("active", k === view);
     });
     currentView = view;
+    document.body.classList.toggle("in-chat", view === "chat");
     $("main").scrollTop = 0;
     $("btnBack").classList.toggle("hidden", !(view === "reader" || view === "chat"));
     $("shadowBar").classList.toggle("hidden", view !== "reader");
@@ -1023,7 +1055,7 @@
       show("conv");
       setHead(HEADS.conv[0], HEADS.conv[1]);
       renderScenarios();
-      preloadVosk();
+      preloadAsr();
     } else if (tab === "vocab") {
       show("vocab");
       setHead(HEADS.vocab[0], HEADS.vocab[1]);
@@ -1097,6 +1129,12 @@
     document.querySelectorAll("#setAccentSeg button").forEach(function (b) {
       b.classList.toggle("active", b.dataset.accent === s.accent);
     });
+    document.querySelectorAll("#setLangSeg button").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.asrLang === Ear.langMode);
+    });
+    if ($("asrStatus")) {
+      $("asrStatus").textContent = Ear.asrReady ? "已就绪 · 中英混说" : "正在准备…";
+    }
     $("setBilingual").classList.toggle("on", !!s.bilingual);
     $("setAutoPlay").classList.toggle("on", !!s.autoPlay);
 
@@ -1587,7 +1625,7 @@
     openScenario: function (sc) {
       this.mode = "scenario";
       this.fromReader = false;
-      preloadVosk();
+      preloadAsr();
       this.token++;
       this.interruptedText = "";
       Sf.hide();
@@ -1605,23 +1643,19 @@
       $("chatTools").classList.remove("hidden");
       $("btnHint").classList.remove("hidden");
       $("btnRestart").classList.remove("hidden");
-      $("chatText").placeholder = "用英文回一句，或点🎙️ 说出来";
-      setHead(sc.title, sc.titleEn);
-      show("chat", sc.title, sc.titleEn);
+      $("chatText").placeholder = "用英文回一句，或点 🎙️ 说出来";
+      show("chat", sc.title, (sc.titleEn ? sc.titleEn + " · " : "") + (sc.level || ""));
       $("btnZhChat").classList.toggle("on", this.zh);
-      $("chatHead").innerHTML =
-        '<div class="ch-emoji">' + (sc.emoji || "💬") + "</div>" +
-        '<div class="ch-main"><div class="ch-title">' + esc(sc.title) + "</div>" +
-        '<div class="ch-sub">' + esc(sc.titleEn) + " · " + esc(sc.level) + "</div></div>" +
-        '<button class="icon-btn" data-act="chat-zh" aria-label="中文对照">中</button>';
+      $("btnZhChat").textContent = this.zh ? "中文 ✓" : "译 中文";
       $("chatStream").innerHTML = "";
-      $("chatHintLine").textContent = "目标：" + (sc.goal || "") + " · 语音：" + Ear.modeName();
+      $("chatHintLine").textContent = "目标：" + (sc.goal || "用简单的一句英文回答") + " · " + Ear.modeName() + "，中文提问也懂";
+      Live.render();
       this.partnerLine(sc.turns[0], true);
     },
 
     openAI: function (contextTitle, contextText) {
       this.mode = "ai";
-      preloadVosk();
+      preloadAsr();
       this.token++;
       this.interruptedText = "";
       Sf.hide();
@@ -1637,18 +1671,15 @@
       $("btnHint").classList.add("hidden");
       $("btnRestart").classList.remove("hidden");
       $("chatText").placeholder = "想说什么都可以，中文提问也行";
-      const title = AI.configured() ? "🤖 AI 自由外教" : "🤖 AI 自由外教（未配置）";
-      setHead("AI 外教", "用你自己的免费额度，练自由对话");
-      show("chat", title, "回复会自动朗读");
-      $("chatHead").innerHTML =
-        '<div class="ch-emoji">🤖</div>' +
-        '<div class="ch-main"><div class="ch-title">AI 自由外教</div>' +
-        '<div class="ch-sub">' + (AI.configured() ? esc(AI.currentName()) : "还没配置接口") + "</div></div>" +
-        '<button class="icon-btn" data-act="chat-zh" aria-label="中文对照">中</button>';
+      setHead("AI 自由外教", AI.configured() ? AI.currentName() : "还没配置接口 · 离线功能照常可用");
+      show("chat", "AI 自由外教", AI.configured() ? "回复会自动朗读 · 中英混说" : "还没配置接口");
+      $("btnZhChat").textContent = this.zh ? "中文 ✓" : "译 中文";
+      $("btnZhChat").classList.toggle("on", this.zh);
       $("chatStream").innerHTML = "";
       $("chatHintLine").textContent = AI.configured()
-        ? "可以直接说：Hi! 也可以说中文，例如「这句话什么意思」「怎么用英语说」 · 语音：" + Ear.modeName()
-        : "还没有配置接口。到“设置 → AI 自由外教”填入自己的免费接口即可；不配置也能用全部离线功能。";
+        ? "直接说 Hi 就行；也可以说中文：「这句话什么意思」「怎么用英语说」"
+        : "还没有配置接口。到「设置 → AI 自由外教」填入自己的免费接口即可；不配置也能用全部离线功能。";
+      Live.render();
 
       if (!AI.configured()) {
         this.sys("还没有配置 AI 接口。内置的 9 个情景对话完全离线可用，先在那里练也够用。", null);
@@ -1673,10 +1704,16 @@
     toggleZh: function () {
       this.zh = !this.zh;
       const btn = $("btnZhChat");
-      if (btn) btn.classList.toggle("on", this.zh);
+      if (btn) {
+        btn.classList.toggle("on", this.zh);
+        btn.textContent = this.zh ? "中文 ✓" : "译 中文";
+      }
       const zh = this.zh;
       document.querySelectorAll("#chatStream .b-zh").forEach(function (el) {
         el.classList.toggle("hidden", !zh);
+      });
+      document.querySelectorAll('#chatStream [data-act="bubble-zh"]').forEach(function (el) {
+        el.textContent = "译 中文";
       });
       toast(this.zh ? "已显示中文对照" : "已隐藏中文对照");
     },
@@ -1687,10 +1724,12 @@
       div.className = "bubble partner";
       div.innerHTML = '<div class="b-en">' + esc(en) + "</div>" +
         (zh ? '<div class="b-zh' + (this.zh ? "" : " hidden") + '">' + esc(zh) + "</div>" : "") +
-        '<button class="b-speak" data-act="speak-text" data-text="' + attr(en) + '">🔊 再听一遍</button>';
+        '<div class="b-actions">' +
+          '<button class="b-act" data-act="speak-text" data-text="' + attr(en) + '">🔊 再听</button>' +
+          (zh ? '<button class="b-act" data-act="bubble-zh">译 中文</button>' : "") +
+        "</div>";
       stream.appendChild(div);
       stream.scrollTop = stream.scrollHeight;
-      $("main").scrollTop = $("main").scrollHeight;
     },
 
     addMe: function (text) {
@@ -1699,7 +1738,7 @@
       div.className = "bubble me";
       div.innerHTML = '<div class="b-tag">我</div><div class="b-en">' + esc(text) + "</div>";
       stream.appendChild(div);
-      $("main").scrollTop = $("main").scrollHeight;
+      stream.scrollTop = stream.scrollHeight;
     },
 
     sys: function (text, model) {
@@ -1710,7 +1749,7 @@
         ? ' 你可以这样说：<span class="model" data-act="speak-text" data-text="' + attr(model) + '">' + esc(model) + " 🔊</span>"
         : "");
       stream.appendChild(div);
-      $("main").scrollTop = $("main").scrollHeight;
+      stream.scrollTop = stream.scrollHeight;
     },
 
     persona: function () {
@@ -2397,7 +2436,7 @@
 
   /* ========================= 事件分发 ========================= */
 
-  function dispatch(act, data) {
+  function dispatch(act, data, el) {
     switch (act) {
       case "open-passage": {
         const it = findItem(data.id);
@@ -2475,6 +2514,16 @@
         Chat.toggleZh();
         break;
       }
+      case "bubble-zh": {
+        const bubble = el ? el.closest(".bubble") : null;
+        const zh = bubble ? bubble.querySelector(".b-zh") : null;
+        if (zh) {
+          const show = zh.classList.contains("hidden");
+          zh.classList.toggle("hidden", !show);
+          if (el) el.textContent = show ? "收起中文" : "译 中文";
+        }
+        break;
+      }
       case "sf-record": {
         Sf.toggleRecord();
         break;
@@ -2512,7 +2561,7 @@
     const t = e.target.closest("[data-act]");
     if (!t) return;
     if (t.tagName === "INPUT") return;
-    dispatch(t.dataset.act, t.dataset);
+    dispatch(t.dataset.act, t.dataset, t);
   });
 
   /* ========================= 绑定 ========================= */
@@ -2715,6 +2764,12 @@
       applySettings();
       fillSettingsForm();
     });
+    if ($("setLangSeg")) {
+      $("setLangSeg").addEventListener("click", function (e) {
+        const b = e.target.closest("button");
+        if (b) Ear.setLang(b.dataset.asrLang);
+      });
+    }
     $("setBilingual").addEventListener("click", function () {
       State.settings.bilingual = !State.settings.bilingual;
       applySettings();
@@ -2761,12 +2816,12 @@
     Ear.load();
     Ear.render();
     // 让原生层的识别语言和上次保存的一致（默认中英自动）
-    if (Bridge && Bridge.setVoskLanguage) { try { Bridge.setVoskLanguage(Ear.langMode); } catch (e) {} }
+    if (Bridge && Bridge.setAsrLanguage) { try { Bridge.setAsrLanguage(Ear.langMode); } catch (e) {} }
     $("btnShowMastered").classList.toggle("on", State.showMastered);
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.1.1";
+      $("aboutVersion").textContent = "版本 1.2.0";
     }
     renderLibrary();
     renderScenarios();
