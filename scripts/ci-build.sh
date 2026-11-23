@@ -124,7 +124,8 @@ fi
 # -------------------------------------------- 离线语音（Sherpa-ONNX） -----
 # AAR 与模型都不进仓库：构建时下载。
 #   · sherpa-onnx-2.0.3.aar          → app/libs/
-#   · SenseVoiceSmall int8 2025-09-09 → assets/sense-voice/{model.int8.onnx,tokens.txt}
+#   · SenseVoiceSmall int8 2024-07-17 → assets/sense-voice/{model.int8.onnx,tokens.txt}
+#     （2025-09-09 的 int8 包实际是粤语微调版 WSYue，英文/中文明显退化，不能用）
 #   · silero_vad_v4.onnx              → assets/silero_vad_v4.onnx
 mkdir -p app/libs
 SHERPA_AAR="app/libs/sherpa-onnx-2.0.3.aar"
@@ -143,7 +144,7 @@ SV_DIR="app/src/main/assets/sense-voice"
 if [ ! -s "${SV_DIR}/model.int8.onnx" ] || [ ! -s "${SV_DIR}/tokens.txt" ]; then
   echo "下载 SenseVoiceSmall int8 模型"
   curl -fL --retry 3 --retry-delay 2 -o /tmp/sensevoice.tar.bz2 \
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
   rm -rf /tmp/sv-unpack && mkdir -p /tmp/sv-unpack
   if ! tar -xjf /tmp/sensevoice.tar.bz2 -C /tmp/sv-unpack 2>/dev/null; then
     echo "tar 解 bz2 失败，改用 python3"

@@ -577,7 +577,14 @@ object SherpaEngine {
                 rec.decode(stream)
                 val result = rec.getResult(stream)
                 val text = cleanText(result.text)
-                val lang = result.lang.ifBlank { if (text.any { isCjk(it) }) "zh" else "en" }
+                val rawLang = result.lang.replace("<|", "").replace("|>", "").trim()
+                val lang = when {
+                    rawLang.startsWith("zh") || rawLang == "yue" -> "zh"
+                    rawLang.startsWith("en") -> "en"
+                    rawLang.isNotEmpty() -> rawLang
+                    text.any { isCjk(it) } -> "zh"
+                    else -> "en"
+                }
                 text to lang
             } catch (t: Throwable) {
                 Log.w(TAG, "decode failed: " + t.message)
