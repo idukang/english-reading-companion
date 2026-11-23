@@ -33,18 +33,23 @@ import java.util.Locale
  * 英语陪读 —— 单 Activity + WebView 外壳。
  *
  * 全部界面、书库、词库、对话内容都打包在 app/src/main/assets/www 里，完全离线；
- * Kotlin 这层只负责四件本机能力：
- *   1. 系统 TTS 朗读（点读 / 整篇朗读 / 对话台词）
+ * Kotlin 这层负责本机能力：
+ *   1. 系统 TTS 朗读（中英混排会自动分段，中文用中文语音、英文用英文语音）
  *   2. 麦克风录音与回放（跟读对比）
- *   3. 系统语音识别（语音回答；没有识别服务的机型自动降级为键盘输入）
- *   4. 状态栏配色
- * 不联网、不上报、无第三方 SDK。
+ *   3. 离线语音识别（Vosk，中英双语；可后台、可边说边听、可打断）
+ *   4. 耳机后台连麦的前台服务（VoiceCompanionService）
+ *   5. 状态栏配色
+ * 不联网、不上报、无统计 SDK。
  */
-class MainActivity : Activity(), TextToSpeech.OnInitListener {
+class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listener {
 
     companion object {
         private const val REQ_AUDIO = 1001
         private const val REQ_VOICE_INTENT = 1002
+
+        @Volatile
+        var instance: MainActivity? = null
+            private set
     }
 
     private lateinit var webView: WebView
@@ -56,6 +61,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var ttsLang = "en-US"
     private var ttsRate = 1.0f
 
+    private data class TtsSegment(val text: String, val zh: Boolean)
+
+    private var ttsSegments: List<TtsSegment> = emptyList()
+    private var ttsSegIndex = 0
+    private var ttsJobId: String? = null
+    private var ttsStartSent = false
+    private var ttsCurrentZh = false
+    private var ttsJobText = ""
+    private var zhVoiceAvailable = true
+    private var zhVoiceWarned = false
+
     // ---------- 录音 ----------
     private var recorder: MediaRecorder? = null
     private var recordFile: File? = null
@@ -63,22 +79,23 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var recordStartAt = 0L
     private var player: MediaPlayer? = null
 
-    // ---------- 语音识别 ----------
+    // ---------- 系统语音识别（Vosk 不可用时的兜底） ----------
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
-    // 停 TTS 后延迟开麦的任务（重复点击时先取消，避免两个识别实例抢麦克风）
     private var pendingListenStart: Runnable? = null
-    // 本次尝试是否已经退到系统语音输入面板（每次 doStartListening 重置）
     private var voiceDialogTried = false
     private var voiceDialogPending = false
-    // 主动 cancel() 也会回调 onError(ERROR_CLIENT)，这段时间内的错误直接忽略
     private var stopping = false
 
     private var pendingRecordAfterPermission = false
     private var pendingSpeechAfterPermission = false
+    private var pendingVoskAfterPermission = false
+    private var pendingVoskBargeIn = false
+    private var pendingServiceLang: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
 
         val root = FrameLayout(this)
         webView = WebView(this)
@@ -105,7 +122,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         webView.webViewClient = object : WebViewClient() {
-            // 只允许加载应用内打包页面，任何外部跳转一律拦截
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return true
                 return !(url.startsWith("file:///android_asset/") || url.startsWith("about:"))
@@ -121,6 +137,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         webView.addJavascriptInterface(Bridge(), "AndroidBridge")
         webView.loadUrl("file:///android_asset/www/index.html")
 
+        // 离线语音：先挂上监听，真正载入模型由网页层按需触发（进对话页时预载）
+        VoskEngine.attach(this)
+        VoskEngine.setCallback(this)
+
         try {
             tts = TextToSpeech(this, this)
         } catch (e: Exception) {
@@ -128,7 +148,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ---------------- TTS ----------------
+    // ================================================================
+    // TTS（中英混排分段）
+    // ================================================================
 
     override fun onInit(status: Int) {
         if (status != TextToSpeech.SUCCESS) {
@@ -137,23 +159,64 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
         val engine = tts ?: return
+        try {
+            val r = engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE)
+            zhVoiceAvailable = r == TextToSpeech.LANG_AVAILABLE ||
+                r == TextToSpeech.LANG_COUNTRY_AVAILABLE ||
+                r == TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE
+        } catch (e: Exception) {
+            zhVoiceAvailable = false
+        }
         applyTtsParams()
         try {
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
-                    emit("window.Native && window.Native.onSpeakStart && window.Native.onSpeakStart(${jsStr(utteranceId)})")
+                    val id = utteranceId ?: return
+                    main.post {
+                        val job = ttsJobId ?: return@post
+                        if (!id.startsWith("$job#")) return@post
+                        VoskEngine.noteTtsStart(currentSegmentText())
+                        if (!ttsStartSent) {
+                            ttsStartSent = true
+                            emit("window.Native && window.Native.onSpeakStart && window.Native.onSpeakStart(${jsStr(job)})")
+                        }
+                    }
                 }
 
                 override fun onDone(utteranceId: String?) {
-                    emit("window.Native && window.Native.onSpeakEnd && window.Native.onSpeakEnd(${jsStr(utteranceId)})")
+                    val id = utteranceId ?: return
+                    main.post {
+                        val job = ttsJobId ?: return@post
+                        if (!id.startsWith("$job#")) return@post
+                        val idx = id.substringAfterLast('#').toIntOrNull() ?: return@post
+                        if (idx != ttsSegIndex) return@post
+                        ttsSegIndex++
+                        speakNextSegment()
+                    }
                 }
 
                 override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                    emit("window.Native && window.Native.onSpeakEnd && window.Native.onSpeakEnd(${jsStr(utteranceId)})")
+                    // 主动 stop 时 ttsJobId 已经被清空；这里只兜底清理状态
+                    main.post { if (ttsJobId == null) VoskEngine.noteTtsEnd() }
                 }
 
                 override fun onError(utteranceId: String?) {
-                    emit("window.Native && window.Native.onSpeakError && window.Native.onSpeakError(${jsStr(utteranceId)})")
+                    val id = utteranceId ?: return
+                    main.post {
+                        val job = ttsJobId ?: return@post
+                        if (!id.startsWith("$job#")) return@post
+                        // 中文段落遇到引擎不支持：跳过这一段，别让整句都不出声
+                        if (ttsCurrentZh) {
+                            zhVoiceAvailable = false
+                            warnNoChineseVoice()
+                            ttsSegIndex++
+                            speakNextSegment()
+                            return@post
+                        }
+                        val idx = id.substringAfterLast('#').toIntOrNull() ?: return@post
+                        if (idx != ttsSegIndex) return@post
+                        finishTtsJob(error = true)
+                    }
                 }
             })
         } catch (e: Exception) {
@@ -174,7 +237,187 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             engine.setSpeechRate(ttsRate.coerceIn(0.3f, 2.5f))
             engine.setPitch(1.0f)
         } catch (e: Exception) {
-            // 忽略：不同语音引擎的参数支持程度不同
+        }
+    }
+
+    private fun isChineseChar(c: Char): Boolean {
+        val code = c.code
+        return (code in 0x4E00..0x9FFF) || (code in 0x3400..0x4DBF) ||
+            (code in 0xF900..0xFAFF) || (code in 0x3000..0x303F) ||
+            (code in 0xFF00..0xFFEF) ||
+            c == '，' || c == '。' || c == '、' || c == '；' || c == '：' || c == '？' ||
+            c == '！' || c == '“' || c == '”' || c == '‘' || c == '’' || c == '…' ||
+            c == '—' || c == '《' || c == '》' || c == '（' || c == '）' || c == '「' ||
+            c == '」' || c == '·'
+    }
+
+    /** 把一段文本切成「中文段 / 英文段」，各自用对应的语音读。 */
+    private fun splitBilingual(text: String): List<TtsSegment> {
+        val out = ArrayList<TtsSegment>()
+        val sb = StringBuilder()
+        var curZh = false
+        var started = false
+        for (c in text) {
+            val zh = isChineseChar(c)
+            if (!started) {
+                curZh = zh
+                started = true
+            } else if (zh != curZh) {
+                val t = sb.toString().trim()
+                if (t.isNotEmpty() && t.any { it.isLetterOrDigit() || isChineseChar(it) }) {
+                    out.add(TtsSegment(t, curZh))
+                }
+                sb.setLength(0)
+                curZh = zh
+            }
+            sb.append(c)
+        }
+        val last = sb.toString().trim()
+        if (last.isNotEmpty() && last.any { it.isLetterOrDigit() || isChineseChar(it) }) {
+            out.add(TtsSegment(last, curZh))
+        }
+        if (out.isEmpty()) {
+            val t = text.trim()
+            if (t.isNotEmpty()) out.add(TtsSegment(t, false))
+        }
+        return out
+    }
+
+    private fun currentSegmentText(): String {
+        val i = ttsSegIndex
+        return if (i in ttsSegments.indices) ttsSegments[i].text else ""
+    }
+
+    private fun speakNextSegment() {
+        val engine = tts
+        if (engine == null) {
+            finishTtsJob(error = true)
+            return
+        }
+        val job = ttsJobId ?: return
+        while (ttsSegIndex < ttsSegments.size) {
+            val seg = ttsSegments[ttsSegIndex]
+            if (seg.text.isBlank()) {
+                ttsSegIndex++
+                continue
+            }
+            ttsCurrentZh = seg.zh
+            if (seg.zh && !zhVoiceAvailable) {
+                warnNoChineseVoice()
+                ttsSegIndex++
+                continue
+            }
+            try {
+                if (seg.zh) {
+                    val res = engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
+                    if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        zhVoiceAvailable = false
+                        warnNoChineseVoice()
+                        ttsSegIndex++
+                        continue
+                    }
+                } else {
+                    val res = engine.setLanguage(Locale.forLanguageTag(ttsLang))
+                    if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        engine.setLanguage(Locale.US)
+                    }
+                }
+                engine.setSpeechRate(ttsRate.coerceIn(0.3f, 2.5f))
+                engine.setPitch(1.0f)
+            } catch (e: Exception) {
+            }
+            val params = Bundle()
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+            val code = try {
+                engine.speak(seg.text, TextToSpeech.QUEUE_FLUSH, params, "$job#$ttsSegIndex")
+            } catch (e: Exception) {
+                TextToSpeech.ERROR
+            }
+            if (code != TextToSpeech.SUCCESS) {
+                if (seg.zh) {
+                    ttsSegIndex++
+                    continue
+                }
+                finishTtsJob(error = true)
+            }
+            return
+        }
+        finishTtsJob(error = false)
+    }
+
+    private fun finishTtsJob(error: Boolean) {
+        val job = ttsJobId
+        ttsJobId = null
+        ttsJobText = ""
+        ttsSegments = emptyList()
+        ttsSegIndex = 0
+        ttsStartSent = false
+        ttsCurrentZh = false
+        VoskEngine.noteTtsEnd()
+        if (job != null) {
+            if (error) {
+                emit("window.Native && window.Native.onSpeakError && window.Native.onSpeakError(${jsStr(job)})")
+            } else {
+                emit("window.Native && window.Native.onSpeakEnd && window.Native.onSpeakEnd(${jsStr(job)})")
+            }
+        }
+    }
+
+    /** 打断 / 手动停止：立刻清空队列，别再往下读。 */
+    private fun cancelTtsJob() {
+        ttsJobId = null
+        ttsJobText = ""
+        ttsSegments = emptyList()
+        ttsSegIndex = 0
+        ttsStartSent = false
+        ttsCurrentZh = false
+        VoskEngine.noteTtsEnd()
+        try {
+            tts?.stop()
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun warnNoChineseVoice() {
+        if (zhVoiceWarned) return
+        zhVoiceWarned = true
+        emit("window.Native && window.Native.onTtsNote && window.Native.onTtsNote('no-zh','这台手机没有中文语音包，中文解释会显示成文字')")
+    }
+
+    // ================================================================
+    // Vosk 回调
+    // ================================================================
+
+    override fun onVoskState(state: String, msg: String) {
+        emit(
+            "window.Native && window.Native.onVoskState && window.Native.onVoskState(" +
+                jsStr(state) + "," + jsStr(msg) + ")"
+        )
+    }
+
+    override fun onSpeechPartial(text: String, lang: String) {
+        emit(
+            "window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(" +
+                jsStr(text) + ",false," + jsStr(lang) + ")"
+        )
+    }
+
+    override fun onSpeechFinal(text: String, lang: String) {
+        emit(
+            "window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(" +
+                jsStr(text) + ",true," + jsStr(lang) + ")"
+        )
+    }
+
+    override fun onBargeIn(ttsText: String) {
+        main.post {
+            val full = if (ttsJobText.isNotBlank()) ttsJobText else ttsText
+            val cut = if (full.length > 240) full.take(240) + "…" else full
+            cancelTtsJob()
+            emit(
+                "window.Native && window.Native.onBargeIn && window.Native.onBargeIn(" +
+                    jsStr(cut) + ")"
+            )
         }
     }
 
@@ -188,6 +431,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     tts?.stop()
                 } catch (e: Exception) {
                 }
+                cancelTtsJob()
                 val file = File(cacheDir, "shadow.m4a")
                 if (file.exists()) file.delete()
                 val r = MediaRecorder()
@@ -255,6 +499,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     tts?.stop()
                 } catch (e: Exception) {
                 }
+                cancelTtsJob()
                 val p = MediaPlayer()
                 p.setDataSource(file.absolutePath)
                 p.setOnCompletionListener { mp ->
@@ -299,7 +544,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ---------------- 语音识别 ----------------
+    // ---------------- 系统语音识别（兜底） ----------------
 
     private fun speechAvailable(): Boolean = try {
         SpeechRecognizer.isRecognitionAvailable(this)
@@ -307,10 +552,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         false
     }
 
-    /**
-     * 每个 SpeechRecognizer 实例配一个专属监听器，回调里先确认实例还是当前那个，
-     * 这样被销毁的旧实例（上一次 ERROR_CLIENT 的残留）不会影响新的这次。
-     */
     private fun createRecognitionListener(r: SpeechRecognizer): RecognitionListener = object : RecognitionListener {
         private fun stale(): Boolean = recognizer !== r
 
@@ -335,10 +576,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         override fun onError(error: Int) {
             if (stale()) return
-            // 用户主动停止（或切到系统语音面板）时，cancel() 也会回调 ERROR_CLIENT，静默处理
             if (stopping) return
             listening = false
-            // 内嵌识别在这台手机上不可靠：自动退到系统语音输入面板（每次开麦只试一次）
             if (shouldFallbackToVoiceDialog(error) && launchVoiceIntent()) return
             val message = when (error) {
                 SpeechRecognizer.ERROR_AUDIO -> "麦克风录音出错"
@@ -359,21 +598,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             if (stale()) return
             listening = false
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
-            emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},true)")
+            emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},true,'en')")
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
             if (stale()) return
             val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
             if (text.isNotEmpty()) {
-                emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},false)")
+                emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},false,'en')")
             }
         }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
-    /** 内嵌识别失败时，这些错误码说明服务本身不可靠，值得换系统语音面板再试一次。 */
     private fun shouldFallbackToVoiceDialog(error: Int): Boolean {
         if (voiceDialogTried || voiceDialogPending) return false
         return error == SpeechRecognizer.ERROR_CLIENT ||
@@ -397,24 +635,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         false
     }
 
-    /**
-     * 系统语音输入面板（RecognizerIntent）。国内很多 ROM 没有内嵌识别服务，
-     * 但系统/输入法自带的语音面板是能用的，这条路径是最后一道保险。
-     * 必须在主线程调用。
-     */
     private fun launchVoiceIntent(): Boolean {
         if (voiceDialogPending) return true
         if (!canUseVoiceIntent()) return false
         return try {
-            // 先让内嵌识别让出麦克风，避免两个识别服务同时抢
             try {
                 recognizer?.cancel()
             } catch (e: Exception) {
             }
-            try {
-                tts?.stop()
-            } catch (e: Exception) {
-            }
+            cancelTtsJob()
             listening = false
             voiceDialogTried = true
             voiceDialogPending = true
@@ -444,7 +673,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    /** 主动让出麦克风后的一小段时间内，忽略系统回调的错误。 */
     private fun markStopping() {
         stopping = true
         main.postDelayed({ stopping = false }, 900)
@@ -452,13 +680,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun doStartListening() {
         main.post {
-            // 已经在听：再点一次就当作“停止”，避免重复 startListening 触发 ERROR_CLIENT
             if (listening || voiceDialogPending) {
                 doStopListening()
                 return@post
             }
             if (!speechAvailable()) {
-                // 没有内嵌识别服务：先试系统语音面板
                 if (launchVoiceIntent()) return@post
                 listening = false
                 emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable','这台手机没有可用的语音识别，请用键盘输入或录音跟读')")
@@ -468,24 +694,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             if (!granted) {
                 pendingSpeechAfterPermission = true
                 emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('permission','正在请求麦克风权限…')")
-                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
+                requestAudioPermissions()
                 return@post
             }
             prepareThenOpenMic()
         }
     }
 
-    /**
-     * 开麦前的准备：销毁旧实例 → 停掉 TTS → 等音频焦点释放 → 再创建新实例开麦。
-     * 旧实例不销毁、TTS 还占着音频，是国产 ROM 上 ERROR_CLIENT 的主要来源。
-     */
     private fun prepareThenOpenMic() {
         voiceDialogTried = false
         destroyRecognizer()
-        try {
-            tts?.stop()
-        } catch (e: Exception) {
-        }
+        cancelTtsJob()
         pendingListenStart?.let { main.removeCallbacks(it) }
         val task = Runnable {
             pendingListenStart = null
@@ -550,21 +769,36 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             val list = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             val text = list?.firstOrNull()?.trim() ?: ""
             if (text.isNotEmpty()) {
-                emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},true)")
+                emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},true,'en')")
                 return
             }
         }
-        // 用户取消或面板没给出结果：告诉网页层，让它展示打字/录音的备用方式
         emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('cancelled','系统语音输入没有返回结果')")
     }
 
     // ---------------- 权限 ----------------
 
+    private fun requestAudioPermissions() {
+        val perms = ArrayList<String>()
+        perms.add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        requestPermissions(perms.toTypedArray(), REQ_AUDIO)
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_AUDIO) return
-        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-        if (granted) {
+        var micGranted = false
+        for (i in permissions.indices) {
+            if (permissions[i] == Manifest.permission.RECORD_AUDIO) {
+                micGranted = i < grantResults.size && grantResults[i] == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        if (micGranted) {
             emit("window.Native && window.Native.onPermissionResult && window.Native.onPermissionResult('RECORD_AUDIO',true)")
             if (pendingRecordAfterPermission) {
                 pendingRecordAfterPermission = false
@@ -574,14 +808,32 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 pendingSpeechAfterPermission = false
                 doStartListening()
             }
+            if (pendingVoskAfterPermission) {
+                pendingVoskAfterPermission = false
+                VoskEngine.startListening(pendingVoskBargeIn)
+            }
+            val lang = pendingServiceLang
+            if (lang != null) {
+                pendingServiceLang = null
+                startVoiceServiceNow(lang)
+            }
         } else {
             pendingRecordAfterPermission = false
             pendingSpeechAfterPermission = false
+            pendingVoskAfterPermission = false
+            pendingServiceLang = null
             emit("window.Native && window.Native.onPermissionResult && window.Native.onPermissionResult('RECORD_AUDIO',false)")
+            emit("window.Native && window.Native.onVoiceService && window.Native.onVoiceService('error','没有麦克风权限，耳机模式用不了')")
         }
     }
 
-    // ---------------- 与网页通信 ----------------
+    // ================================================================
+    // 与网页通信
+    // ================================================================
+
+    fun emitJs(js: String) {
+        emit(js)
+    }
 
     private fun emit(js: String) {
         main.post {
@@ -610,6 +862,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         return sb.toString()
     }
 
+    private fun startVoiceServiceNow(langMode: String) {
+        try {
+            val intent = Intent(this, VoiceCompanionService::class.java).apply {
+                action = VoiceCompanionService.ACTION_START
+                putExtra(VoiceCompanionService.EXTRA_LANG, langMode)
+            }
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            try {
+                webView.resumeTimers()
+            } catch (e: Exception) {
+            }
+            emit("window.Native && window.Native.onVoiceService && window.Native.onVoiceService('starting','')")
+        } catch (e: Exception) {
+            emit(
+                "window.Native && window.Native.onVoiceService && window.Native.onVoiceService('error'," +
+                    jsStr(e.message ?: "无法启动后台语音服务") + ")"
+            )
+        }
+    }
+
     inner class Bridge {
 
         @JavascriptInterface
@@ -630,24 +902,100 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 ttsLang = if (lang.isNullOrBlank()) "en-US" else lang
                 applyTtsParams()
                 stopPlaybackInternal()
-                val params = Bundle()
-                params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-                val code = engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
-                if (code != TextToSpeech.SUCCESS) {
-                    emit("window.Native && window.Native.onSpeakError && window.Native.onSpeakError(${jsStr(id)})")
+                cancelTtsJob()
+                val segs = splitBilingual(text)
+                if (segs.isEmpty()) {
+                    emit("window.Native && window.Native.onSpeakEnd && window.Native.onSpeakEnd(${jsStr(id)})")
+                    return@post
                 }
+                ttsJobId = id
+                ttsJobText = text
+                ttsSegments = segs
+                ttsSegIndex = 0
+                ttsStartSent = false
+                speakNextSegment()
             }
         }
 
         @JavascriptInterface
         fun stopSpeak() {
+            main.post { cancelTtsJob() }
+        }
+
+        // ---------- 离线语音（Vosk） ----------
+
+        @JavascriptInterface
+        fun hasVosk(): Boolean = VoskEngine.hasEnglishModel(this@MainActivity)
+
+        @JavascriptInterface
+        fun hasVoskChinese(): Boolean = VoskEngine.hasChineseModel(this@MainActivity)
+
+        @JavascriptInterface
+        fun isVoskReady(): Boolean = VoskEngine.isReady()
+
+        @JavascriptInterface
+        fun prepareVosk() {
+            main.post { VoskEngine.prepare(applicationContext) }
+        }
+
+        @JavascriptInterface
+        fun setVoskLanguage(mode: String) {
+            VoskEngine.setLanguageMode(mode)
+        }
+
+        @JavascriptInterface
+        fun startVoskListen(bargeIn: Boolean): Boolean {
+            val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                pendingVoskAfterPermission = true
+                pendingVoskBargeIn = bargeIn
+                main.post {
+                    emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('permission','正在请求麦克风权限…')")
+                    requestAudioPermissions()
+                }
+                return true
+            }
+            return VoskEngine.startListening(bargeIn)
+        }
+
+        @JavascriptInterface
+        fun stopVoskListen() {
+            VoskEngine.stopListening()
+        }
+
+        @JavascriptInterface
+        fun isVoskListening(): Boolean = false
+
+        // ---------- 耳机后台连麦服务 ----------
+
+        @JavascriptInterface
+        fun startVoiceService(langMode: String) {
+            main.post {
+                val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                if (!granted) {
+                    pendingServiceLang = langMode
+                    emit("window.Native && window.Native.onVoiceService && window.Native.onVoiceService('permission','正在请求麦克风权限…')")
+                    requestAudioPermissions()
+                    return@post
+                }
+                startVoiceServiceNow(langMode)
+            }
+        }
+
+        @JavascriptInterface
+        fun stopVoiceService() {
             main.post {
                 try {
-                    tts?.stop()
+                    stopService(Intent(this@MainActivity, VoiceCompanionService::class.java))
                 } catch (e: Exception) {
                 }
             }
         }
+
+        @JavascriptInterface
+        fun isVoiceServiceActive(): Boolean = VoiceCompanionService.isActive
+
+        // ---------- 录音 ----------
 
         @JavascriptInterface
         fun hasRecording(): Boolean {
@@ -662,7 +1010,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 pendingRecordAfterPermission = true
                 main.post {
                     emit("window.Native && window.Native.onRecordState && window.Native.onRecordState('permission','正在请求麦克风权限…')")
-                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
+                    requestAudioPermissions()
                 }
                 return
             }
@@ -702,11 +1050,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         @JavascriptInterface
         fun isSpeechAvailable(): Boolean = speechAvailable()
 
-        /** 系统里是否有可用的语音输入面板（与内嵌识别服务是两回事）。 */
         @JavascriptInterface
         fun canUseVoiceDialog(): Boolean = canUseVoiceIntent()
 
-        /** 主动打开系统语音输入面板；说完通过 onSpeechResult 回传。 */
         @JavascriptInterface
         fun startVoiceDialog() {
             main.post {
@@ -838,14 +1184,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onPause() {
         super.onPause()
+        // 耳机后台连麦时，熄屏/切后台不能停朗读和麦克风
+        if (VoiceCompanionService.isActive) return
         try {
             tts?.stop()
         } catch (e: Exception) {
         }
+        cancelTtsJob()
         stopPlaybackInternal()
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
+        try {
+            if (VoiceCompanionService.isActive) {
+                stopService(Intent(this, VoiceCompanionService::class.java))
+            }
+        } catch (e: Exception) {
+        }
+        VoskEngine.setCallback(null)
+        VoskEngine.shutdown()
         try {
             if (recording) {
                 recorder?.release()

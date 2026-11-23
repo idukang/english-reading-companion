@@ -1019,3 +1019,70 @@ body[data-theme="dark"] .kp { color: #f3e6bf; }
 @media (prefers-reduced-motion: reduce) {
   .stage-face, .avatar-svg .eye-group, .wave, .confetti { animation: none !important; }
 }
+
+/* ---------------- 耳机后台连麦 ---------------- */
+
+.ear-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: calc(100% - 28px);
+  margin: 0 14px 10px;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--card), var(--card-2));
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  box-shadow: var(--shadow);
+}
+.ear-toggle .ear-ico { font-size: 26px; line-height: 1; flex: none; }
+.ear-toggle .ear-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.ear-toggle .ear-main b { font-size: 15px; font-weight: 700; }
+.ear-toggle .ear-sub { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.ear-toggle .ear-switch {
+  flex: none;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  position: relative;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+.ear-toggle .ear-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.16s ease;
+}
+.ear-toggle.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ear-toggle.on .ear-switch { background: var(--accent); border-color: var(--accent); }
+.ear-toggle.on .ear-switch::after { transform: translateX(20px); }
+.ear-toggle.waiting .ear-ico,
+.ear-toggle.on .ear-ico { animation: earPulse 1.8s ease-in-out infinite; }
+@keyframes earPulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.12); opacity: 1; }
+}
+.ear-lang {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 14px 14px;
+}
+.ear-lang .chip { font-size: 12.5px; }
+.ear-lang .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.ear-tip { margin-left: auto; color: var(--text-3); }
+body.ear-on .stage { box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }

@@ -4,7 +4,7 @@
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.0.1.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.1.0.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -75,6 +75,12 @@
 - 不需要自动接话时，仍然可以手动点 🎙️ 或打字
 - 答得不够好时，角色会先把你该说的那句英文念一遍，再继续对话——听得到正确版本
 
+**📞 耳机后台连麦（像打电话一样聊）**
+- 一键开启前台服务，**熄屏、切到别的应用都能继续说**；通知栏常驻一条“耳机语音对话中”，点「结束对话」随时停
+- **随时打断**：AI 说话时你也开麦听着（`VOICE_COMMUNICATION` + 系统回声消除），你一张口就把它的声音停掉，它顺着你新说的内容接话，不会重复被打断的那半句
+- **中英都懂**：说英文练口语；用中文问「什么意思」「怎么用英语说」「再说一遍」「慢一点」也听得懂，会用中文解释 + 英文示范，然后把你带回英语对话
+- 语音识别模式可切：中英自动 / 只认英文 / 中文提问；中文模型按需载入，进对话页才开始加载
+
 **9 个离线情景对话**，每个 4 轮真实对话：
 
 | 级别 | 情景 |
@@ -85,7 +91,7 @@
 
 对方先用英文说一句（自动朗读），你用**语音**或**键盘**回一句：
 
-- 🎙️ **语音回答**：调用系统语音识别，识别到的英文直接填进输入框；识别服务不可靠的机型会自动改走系统语音输入面板
+- 🎙️ **语音回答**：内置 **Vosk 离线语音识别**（英文 + 中文，不联网、不依赖系统语音服务），识别到的内容直接填进输入框；老机型或没打包模型时会自动退回系统语音
 - 🛟 **说不出来也不会卡住**：识别不可用时会自动出现一条备用栏——「🎙️ 录音口语对比」+「✅ 我已说完，继续」+ 2–3 个可点就发的示范句，也能直接打字或用输入法的语音键
 - 💡 **提示**：给中文提示 + 两三句可以直接点用的示范说法
 - 回完立刻有**中文点评**：答得好会夸哪里好，答得偏会给出更地道的说法（可点朗读）
@@ -121,7 +127,7 @@
 
 ## 三、安装方法
 
-1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.0.1.apk`
+1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.1.0.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
 
@@ -144,7 +150,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.0.1`。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.1.0`。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
@@ -167,7 +173,9 @@ gradle :app:assembleDebug
 app/src/main/
 ├── AndroidManifest.xml          # 只申请 INTERNET + RECORD_AUDIO
 ├── java/com/idukang/readingcompanion/
-│   └── MainActivity.kt          # WebView 外壳 + TTS + 录音 + 语音识别 + HTTPS 请求桥
+│   ├── MainActivity.kt          # WebView 外壳 + 中英分段 TTS + 录音 + 语音识别桥 + HTTPS 请求桥
+│   ├── VoskEngine.kt            # 离线语音识别（16kHz AudioRecord + AEC + 打断 + 中英双模型）
+│   └── VoiceCompanionService.kt # 耳机后台连麦的前台服务（唤醒锁 / 音频焦点 / 常驻通知）
 ├── res/                         # 主题、颜色、图标
 └── assets/www/                  # 全部界面与内容（离线）
     ├── index.html               # 页面骨架
@@ -179,16 +187,21 @@ app/src/main/
     └── scenarios.js             # 9 个离线情景对话
 ```
 
-技术栈：Android `Activity` + `WebView` + `JavascriptInterface`，界面用原生 HTML/CSS/JS，**零第三方依赖**（连 AndroidX 都没有），所以 APK 很小、也没有任何追踪 SDK。
+技术栈：Android `Activity` + `WebView` + `JavascriptInterface`，界面用原生 HTML/CSS/JS，连 AndroidX 都没有。
+唯一的第三方依赖是离线语音识别 **Vosk**（`com.alphacephei:vosk-android` + JNA，Apache-2.0，本地推理、不联网），
+语音模型（英文 small-en-us-0.15 / 中文 small-cn-0.22，各约 40MB）在构建时下载并打进 `assets/`，所以安装包约 90MB。
+没有任何统计、广告、崩溃上报 SDK。
 
 ---
 
 ## 六、隐私说明
 
 - 不收集任何个人信息，不含统计、广告、崩溃上报 SDK，不读取通讯录、短信、相册、位置
-- 权限只有两个：
+- 权限都很克制：
   - `INTERNET`：仅用于你主动触发的「联网查词」和你自己配置的 AI 接口
-  - `RECORD_AUDIO`：跟读录音与语音回答，音频只写在本机缓存目录，退出即覆盖，不上传
+  - `RECORD_AUDIO`：跟读录音、语音回答、离线识别；**语音只在本机用 Vosk 转成文字，音频不上传、不保存**
+  - `FOREGROUND_SERVICE(_MICROPHONE/_MEDIA_PLAYBACK)` + `WAKE_LOCK`：只在你打开「耳机后台连麦」时使用，熄屏后继续听你说的
+  - `POST_NOTIFICATIONS`：显示那条「耳机语音对话中」的通知（Android 13+）；不给也能用，只是看不到通知
 - 生词本、已读进度、设置、AI 配置都存在本机应用私有存储里，卸载即清除
 - 应用内所有跳转都被拦截，不能打开外部网页
 
@@ -200,7 +213,13 @@ app/src/main/
 A：先确认手机有可用的 TTS 引擎和英语语音包（设置 → 无障碍 → 文字转语音）。部分机型默认引擎是“Google 文字转语音”，没装 Google 服务时为空，换成本机自带的引擎即可。
 
 **Q：语音回答按钮点了没反应？**
-A：说明这台手机的内嵌语音识别服务不可靠。v1.0.1 起会自动改走系统语音输入面板；面板也没有或你取消了，对话页会直接给出备用栏（录音对比 / 我已说完，继续 / 示范句），用键盘输入或用输入法上的语音键也一样能练。
+A：v1.1.0 起默认用打包在安装包里的 Vosk 离线识别，不再依赖系统的语音服务，国内 ROM 上也能用。第一次点会花 1–2 秒把模型解包到应用私有目录。如果仍然没反应，对话页会自动出现备用栏（录音对比 / 我已说完，继续 / 示范句），也可以直接打字。
+
+**Q：耳机连麦熄屏后还有效吗？**
+A：有效。它用前台服务 + 部分唤醒锁保持麦克风和朗读，通知栏会一直显示「耳机语音对话中」，点「结束对话」或通知上的叉才会停。注意：按住手机把 App 从最近任务里划掉，对话会结束（这时网页层已经被系统清掉了）。
+
+**Q：蓝牙耳机能用吗？**
+A：朗读会走蓝牙耳机（A2DP）没问题。说话时，有线耳机会用耳机上的麦克风；蓝牙耳机通常只接管“听”，麦克风还是手机的——离手机近一点说就行。
 
 **Q：能改内容吗？**
 A：可以，`assets/www/library.js`、`dict.js`、`scenarios.js` 就是纯数据文件，按同样的格式加文章、加单词、加情景即可。

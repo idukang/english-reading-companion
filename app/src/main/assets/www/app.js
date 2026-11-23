@@ -256,8 +256,8 @@
       ASR.onState(state, info);
     },
 
-    onSpeechResult: function (text, isFinal) {
-      ASR.onResult(text, isFinal);
+    onSpeechResult: function (text, isFinal, lang) {
+      ASR.onResult(text, isFinal, lang);
     },
 
     onSpeechError: function (code, msg) {
@@ -268,6 +268,22 @@
       const p = Http.pending[id];
       if (!p) return;
       p.ok(code, body);
+    },
+
+    onVoskState: function (state, msg) {
+      Ear.onVosk(state, msg);
+    },
+
+    onVoiceService: function (state, msg) {
+      Ear.onService(state, msg);
+    },
+
+    onBargeIn: function (text) {
+      Ear.onBargeIn(text);
+    },
+
+    onTtsNote: function (code, msg) {
+      if (msg) toast(msg);
     }
   };
 
@@ -497,6 +513,23 @@
 
   /* ========================= 语音识别 ========================= */
 
+  function preloadVosk() {
+    if (Bridge && Bridge.prepareVosk) {
+      try { Bridge.prepareVosk(); } catch (e) {}
+    }
+  }
+
+  const VoskASR = {
+    available: function () {
+      if (!Bridge || !Bridge.hasVosk) return false;
+      try { return !!Bridge.hasVosk(); } catch (e) { return false; }
+    },
+    ready: function () {
+      if (!Bridge || !Bridge.isVoskReady) return false;
+      try { return !!Bridge.isVoskReady(); } catch (e) { return false; }
+    }
+  };
+
   const ASR = {
     cb: null,
     live: null,
@@ -507,6 +540,7 @@
     failMsg: "",
 
     available: function () {
+      if (VoskASR.available()) return true;
       if (!Bridge) return false;
       try {
         return Bridge.isSpeechAvailable ? !!Bridge.isSpeechAvailable() : true;
@@ -518,6 +552,27 @@
       this.dialog = false;
       if (!Bridge) {
         toast("当前环境不支持语音识别，用键盘输入吧");
+        return;
+      }
+      // 优先用打包在安装包里的离线识别（不依赖系统语音服务，中英都能听）
+      if (VoskASR.available()) {
+        this.cb = opts.onText || null;
+        this.live = opts.input || null;
+        this.failed = false;
+        this.failMsg = "";
+        if (Bridge.prepareVosk) { try { Bridge.prepareVosk(); } catch (e) {} }
+        Sf.hide();
+        try {
+          Bridge.startVoskListen(false);
+          this.listening = true;
+          this.button(true);
+          if (currentView === "chat") {
+            Stage.listen();
+            $("chatHintLine").textContent = "听着呢——直接说英文，也可以说中文提问";
+          }
+        } catch (e) {
+          this.markFailed();
+        }
         return;
       }
       if (opts.auto && this.failed) {
@@ -536,6 +591,7 @@
     },
 
     stop: function () {
+      if (Bridge && Bridge.stopVoskListen) { try { Bridge.stopVoskListen(); } catch (e) {} }
       if (Bridge && Bridge.stopListening) { try { Bridge.stopListening(); } catch (e) {} }
       this.listening = false;
       this.dialog = false;
@@ -567,7 +623,6 @@
       } else if (state === "permission") {
         toast("正在请求麦克风权限…");
       } else if (state === "dialog") {
-        // 已经切到系统语音输入面板，等它把结果带回来
         this.listening = false;
         this.dialog = true;
         this.button(false);
@@ -588,8 +643,14 @@
       }
     },
 
-    onResult: function (text, isFinal) {
+    onResult: function (text, isFinal, lang) {
       if (!text) return;
+      const lg = lang || (/[\u4e00-\u9fff]/.test(text) ? "zh" : "en");
+      if (Ear.on) {
+        if (isFinal) Ear.onFinal(text, lg);
+        else Ear.onPartial(text, lg);
+        return;
+      }
       if (this.live) this.live.value = text;
       if (isFinal) {
         this.listening = false;
@@ -601,16 +662,15 @@
         const cb = this.cb;
         this.cb = null;
         if (cb) cb(text);
+        else if (currentView === "chat") Chat.send(text, { lang: lg, byVoice: true });
       }
     },
 
     onError: function (code, msg) {
-      // 系统语音面板自己的失败走 onActivityResult → onSpeechState('cancelled')
       if (this.dialog) { this.dialog = false; return; }
       this.listening = false;
       this.button(false);
       this.cb = null;
-      // 真正坏掉的错误：2 网络 / 4 服务 / 5 客户端 / 8 识别忙
       const broken = (code === 2 || code === 4 || code === 5 || code === 8);
       if (broken) {
         this.markFailed();
@@ -628,6 +688,226 @@
         b.style.color = on ? "#fff" : "";
         b.style.borderColor = on ? "var(--warm)" : "";
       });
+    }
+  };
+
+  /* ================= 耳机后台连麦（离线 Vosk + 前台服务） ================= */
+
+  const Ear = {
+    on: false,
+    starting: false,
+    active: false,
+    voskReady: false,
+    zhReady: false,
+    langMode: "auto",
+    listening: false,
+    interrupted: false,
+    onceCb: null,
+
+    supported: function () {
+      if (!Bridge || !Bridge.startVoiceService) return false;
+      try { return !!(Bridge.hasVosk && Bridge.hasVosk()); } catch (e) { return false; }
+    },
+
+    load: function () {
+      const m = LS.get("erc.earLang", "auto");
+      this.langMode = (m === "en" || m === "zh") ? m : "auto";
+    },
+
+    setLang: function (mode) {
+      this.langMode = mode;
+      LS.set("erc.earLang", mode);
+      if (Bridge && Bridge.setVoskLanguage) { try { Bridge.setVoskLanguage(mode); } catch (e) {} }
+      this.render();
+      const names = { auto: "中英自动", en: "只认英文", zh: "中文优先" };
+      toast("语音识别：" + names[mode]);
+    },
+
+    render: function () {
+      const open = this.on || this.starting;
+      const btn = $("btnEar");
+      if (btn) {
+        btn.classList.toggle("on", open);
+        btn.classList.toggle("waiting", this.starting && !this.active);
+      }
+      const title = $("earTitle");
+      if (title) {
+        title.textContent = (this.starting && !this.active)
+          ? "耳机连麦正在启动…"
+          : (this.on ? "耳机连麦已开启" : "🎧 耳机后台连麦");
+      }
+      const sub = $("earSub");
+      if (sub) {
+        sub.textContent = this.on
+          ? (this.active ? "熄屏也能说 · 随时打断 · 中文提问也懂 · 点一下结束" : "正在准备离线语音…")
+          : "像打电话一样聊：熄屏、切到别的应用都能说，随时可以打断，中文提问也听得懂";
+      }
+      const sw = $("earSwitch");
+      if (sw) sw.classList.toggle("on", open);
+      document.querySelectorAll("[data-lang]").forEach(function (b) {
+        b.classList.toggle("on", b.dataset.lang === Ear.langMode);
+      });
+      const chat = $("btnEarChat");
+      if (chat) {
+        chat.classList.toggle("on", this.on);
+        chat.textContent = this.on ? "🎧 连麦中" : "🎧 耳机连麦";
+      }
+      document.body.classList.toggle("ear-on", this.on);
+    },
+
+    toggle: function () {
+      if (this.on || this.starting) this.disable(false);
+      else this.enable();
+    },
+
+    enable: function () {
+      if (this.on || this.starting) return;
+      if (!this.supported()) {
+        toast("这个安装包没有离线语音模型，先用打字或系统语音");
+        return;
+      }
+      if (Bridge.prepareVosk) { try { Bridge.prepareVosk(); } catch (e) {} }
+      this.starting = true;
+      this.on = true;
+      this.render();
+      if (currentView === "chat") $("chatHintLine").textContent = "正在打开耳机连麦…";
+      try {
+        Bridge.startVoiceService(this.langMode);
+      } catch (e) {
+        this.starting = false;
+        this.on = false;
+        this.render();
+        toast("无法启动耳机模式");
+      }
+    },
+
+    disable: function (quiet) {
+      this.on = false;
+      this.starting = false;
+      this.active = false;
+      this.listening = false;
+      this.onceCb = null;
+      this.interrupted = false;
+      TTS.stop();
+      try { if (Bridge && Bridge.stopVoskListen) Bridge.stopVoskListen(); } catch (e) {}
+      try { if (Bridge && Bridge.stopVoiceService) Bridge.stopVoiceService(); } catch (e) {}
+      this.render();
+      if (!quiet) toast("耳机连麦已关闭");
+    },
+
+    // ---------- 原生回调 ----------
+
+    onService: function (state, msg) {
+      if (state === "permission") { toast("正在请求麦克风权限…"); return; }
+      if (state === "starting") { this.starting = true; this.render(); return; }
+      if (state === "active") {
+        this.starting = false;
+        this.active = true;
+        this.render();
+        Chat.startEarSession();
+        return;
+      }
+      if (state === "stopped") {
+        if (this.on || this.starting) {
+          this.on = false;
+          this.starting = false;
+          this.active = false;
+          this.render();
+          toast(msg || "耳机连麦已结束");
+        }
+        return;
+      }
+      if (state === "error") {
+        this.on = false;
+        this.starting = false;
+        this.active = false;
+        this.render();
+        toast(msg || "耳机模式启动失败");
+        return;
+      }
+      if (state === "paused" || state === "focus-lost") {
+        this.listening = false;
+        if (msg) toast(msg);
+      }
+    },
+
+    onVosk: function (state, msg) {
+      if (state === "ready") {
+        this.voskReady = true;
+        if (currentView === "chat") $("chatHintLine").textContent = "离线语音已就绪，直接说就行";
+      } else if (state === "ready-zh") {
+        this.zhReady = true;
+      } else if (state === "zh-unavailable") {
+        this.zhReady = false;
+      } else if (state === "loading") {
+        if (currentView === "chat") $("chatHintLine").textContent = "正在准备离线语音…";
+      } else if (state === "listening") {
+        this.listening = true;
+        ASR.button(true);
+        if (currentView === "chat" && !Ear.interrupted) Stage.listen();
+      } else if (state === "stopped") {
+        this.listening = false;
+        ASR.button(false);
+      } else if (state === "error") {
+        this.voskReady = false;
+        if (this.on) {
+          toast(msg || "离线语音出错，先用打字");
+        } else if (currentView === "chat") {
+          ASR.markFailed(msg || "离线语音没能启动，先用下面任意一种方式接着说：");
+        }
+      }
+      this.render();
+    },
+
+    armBargeIn: function (text) {
+      if (!this.on) return;
+      this.listening = true;
+      this.interrupted = false;
+      try { if (Bridge && Bridge.startVoskListen) Bridge.startVoskListen(true); } catch (e) {}
+    },
+
+    relax: function () {
+      if (!this.on) return;
+      this.listening = true;
+      try { if (Bridge && Bridge.startVoskListen) Bridge.startVoskListen(false); } catch (e) {}
+      Stage.listen();
+    },
+
+    listenOnce: function (cb) {
+      this.onceCb = cb || null;
+      try { if (Bridge && Bridge.startVoskListen) Bridge.startVoskListen(false); } catch (e) {}
+    },
+
+    onPartial: function (text, lang) {
+      if (!text) return;
+      this.listening = true;
+      if (currentView === "chat") {
+        const t = $("chatText");
+        if (t && document.activeElement !== t) t.value = text;
+        $("chatHintLine").textContent = "你在说：" + text;
+        Stage.listen();
+      }
+    },
+
+    onFinal: function (text, lang) {
+      this.listening = false;
+      if (!text) return;
+      const cb = this.onceCb;
+      if (cb) {
+        this.onceCb = null;
+        cb(text);
+        return;
+      }
+      if (currentView !== "chat") {
+        if (!(Chat.scenario || Chat.mode === "ai")) return;
+      }
+      Chat.send(text, { lang: lang, byVoice: true });
+    },
+
+    onBargeIn: function (text) {
+      this.interrupted = true;
+      TTS.stop();
+      Chat.onBargeIn(text);
     }
   };
 
@@ -696,7 +976,7 @@
   }
 
   function switchTab(tab) {
-    TTS.stop();
+    if (!Ear.on) TTS.stop();
     Rec.state = "idle";
     Stage.settle();
     currentTab = tab;
@@ -711,6 +991,7 @@
       show("conv");
       setHead(HEADS.conv[0], HEADS.conv[1]);
       renderScenarios();
+      preloadVosk();
     } else if (tab === "vocab") {
       show("vocab");
       setHead(HEADS.vocab[0], HEADS.vocab[1]);
@@ -1240,6 +1521,22 @@
 
   /* ========================= 情景对话 ========================= */
 
+  const ACKS = [
+    "Oh, good point!",
+    "Sure, let's talk about that!",
+    "Got it!",
+    "Right, I see what you mean!",
+    "That's interesting!"
+  ];
+
+  function pickAck() {
+    return ACKS[Math.floor(Math.random() * ACKS.length)];
+  }
+
+  function hasChinese(s) {
+    return /[\u4e00-\u9fff]/.test(String(s || ""));
+  }
+
   const Chat = {
     mode: "scenario",
     scenario: null,
@@ -1251,10 +1548,16 @@
     aiContext: "",
     busy: false,
     fromReader: false,
+    // 每次被打断就 +1：所有延迟回调先对一下号，避免“打断后旧台词还在继续说/自动推进”
+    token: 0,
+    interruptedText: "",
 
     openScenario: function (sc) {
       this.mode = "scenario";
       this.fromReader = false;
+      preloadVosk();
+      this.token++;
+      this.interruptedText = "";
       Sf.hide();
       const scTier = tierOfScenario(sc.id);
       if (scTier) {
@@ -1286,6 +1589,9 @@
 
     openAI: function (contextTitle, contextText) {
       this.mode = "ai";
+      preloadVosk();
+      this.token++;
+      this.interruptedText = "";
       Sf.hide();
       Stage.listen();
       this.scenario = null;
@@ -1298,7 +1604,7 @@
       $("chatTools").classList.remove("hidden");
       $("btnHint").classList.add("hidden");
       $("btnRestart").classList.remove("hidden");
-      $("chatText").placeholder = "想说什么都可以，英文为主";
+      $("chatText").placeholder = "想说什么都可以，中文提问也行";
       const title = AI.configured() ? "🤖 AI 自由外教" : "🤖 AI 自由外教（未配置）";
       setHead("AI 外教", "用你自己的免费额度，练自由对话");
       show("chat", title, "回复会自动朗读");
@@ -1309,20 +1615,21 @@
         '<button class="icon-btn" data-act="chat-zh" aria-label="中文对照">中</button>';
       $("chatStream").innerHTML = "";
       $("chatHintLine").textContent = AI.configured()
-        ? "可以直接说：Hi! I want to practise English. 也可以聊刚才那篇文章。"
+        ? "可以直接说：Hi! 也可以说中文，例如「这句话什么意思」「怎么用英语说」"
         : "还没有配置接口。到“设置 → AI 自由外教”填入自己的免费接口即可；不配置也能用全部离线功能。";
 
       if (!AI.configured()) {
         this.sys("还没有配置 AI 接口。内置的 9 个情景对话完全离线可用，先在那里练也够用。", null);
         return;
       }
-      this.sys("已连接你自己的接口：" + AI.currentName() + "。想聊什么都可以，写完我能帮你挑一个可以改得更好的地方。", null);
+      this.sys("已连接你自己的接口：" + AI.currentName() + "。中英文都能聊：说英文练口语，用中文问语法和意思。", null);
     },
 
     closeChat: function () {
       TTS.stop();
       Sf.hide();
       Stage.settle();
+      if (Ear.on) toast("耳机连麦还在后台运行，点通知里的「结束对话」可以关掉");
       if (this.fromReader && Reader.item) {
         this.fromReader = false;
         show("reader", Reader.item.titleZh || Reader.item.title, Reader.item.title);
@@ -1378,37 +1685,40 @@
       return PERSONAS[Stage.personaId] || PERSONAS.kids;
     },
 
+    /**
+     * 朗读一句 AI 的话。
+     * 耳机模式下先开“边说边听”，用户一插话就能立刻打断（token 会变，后面的回调全部作废）。
+     */
     speakAs: function (text, onDone) {
       const p = this.persona();
+      const self = this;
+      const token = this.token;
       Stage.speak();
+      if (Ear.on) Ear.armBargeIn(text);
       TTS.speak(text, {
         rate: p.speed,
         onStart: function () { Stage.speak(); },
         onEnd: function () {
+          if (token !== self.token) return;
           Stage.settle();
-          if (onDone) setTimeout(onDone, 220);
+          if (onDone) setTimeout(function () { if (token === self.token) onDone(); }, 220);
         },
         onError: function () {
+          if (token !== self.token) return;
           Stage.settle();
-          if (onDone) setTimeout(onDone, 220);
+          if (onDone) setTimeout(function () { if (token === self.token) onDone(); }, 220);
         }
       });
     },
 
     partnerLine: function (turn, speak) {
       this.addPartner(turn.en, turn.zh);
+      const self = this;
       if (speak !== false) {
-        const self = this;
-        const p = self.persona();
-        Stage.speak();
-        TTS.speak(turn.en, {
-          rate: p.speed,
-          onStart: function () { Stage.speak(); },
-          onEnd: function () { self.afterPartnerSpeak(); },
-          onError: function () { self.afterPartnerSpeak(); }
-        });
+        this.speakAs(turn.en, function () { self.afterPartnerSpeak(); });
       } else {
         Stage.listen();
+        if (Ear.on) Ear.relax();
       }
       $("chatHintLine").textContent = "提示：" + (turn.tip || "用简单的一句英文回答就好");
     },
@@ -1416,15 +1726,20 @@
     afterPartnerSpeak: function () {
       if (this.mode !== "scenario" || this.finished) {
         Stage.settle();
+        if (Ear.on) Ear.relax();
         return;
       }
       Stage.listen();
+      if (Ear.on) {
+        $("chatHintLine").textContent = "轮到你了——直接说英文，随时可以打断我";
+        Ear.relax();
+        return;
+      }
       if (State.settings.autoTurn && !ASR.failed) {
         $("chatHintLine").textContent = "轮到你了——直接说英文，麦克风已自动打开";
         const self = this;
         setTimeout(function () { self.startListen(); }, 260);
       } else if (State.settings.autoTurn && ASR.failed) {
-        // 语音识别已经坏过：不再自动开麦，直接把备用方式摆出来
         this.showFallback(ASR.failMsg);
       } else {
         $("chatHintLine").textContent = "轮到你了：点 🎙️ 开口说，或者直接打字";
@@ -1432,6 +1747,7 @@
     },
 
     startListen: function () {
+      if (Ear.on) { Ear.listenOnce(null); return; }
       if (ASR.failed) {
         Stage.settle();
         this.showFallback(ASR.failMsg);
@@ -1448,8 +1764,49 @@
 
     showFallback: function (msg) {
       if (currentView !== "chat") return;
+      if (Ear.on) return;
       if (this.mode === "scenario" && this.finished) return;
       Sf.show(msg);
+    },
+
+    /** 耳机连麦刚打开：把对话接上（没开对话就开一个），说完自动听 */
+    startEarSession: function () {
+      if (currentView === "chat" && (this.scenario || this.mode === "ai")) {
+        if (this.mode === "ai") {
+          if (!this.aiHistory.length) {
+            this.speakAs("Hi! I'm here. Say anything in English — or ask me in Chinese.", function () { Ear.relax(); });
+          } else {
+            Ear.relax();
+          }
+          return;
+        }
+        const t = this.currentTurn();
+        if (t && !this.finished) this.speakAs(t.en, function () { Ear.relax(); });
+        else Ear.relax();
+        return;
+      }
+      if (AI.configured()) {
+        this.openAI("", "");
+        this.speakAs("Hi! This is hands-free mode. Go ahead — say anything in English.", function () { Ear.relax(); });
+        return;
+      }
+      const sc = (SCENARIOS[currentConvTier] || [])[0];
+      if (sc) {
+        this.openScenario(sc);
+        toast("耳机连麦已开启，先从「" + sc.title + "」开始");
+      } else {
+        Ear.relax();
+      }
+    },
+
+    /** 用户打断了 AI：作废所有排队中的台词和推进 */
+    onBargeIn: function (text) {
+      this.token++;
+      this.interruptedText = text || "";
+      if (currentView === "chat") {
+        $("chatHintLine").textContent = "你打断了 —— 接着说，我听着";
+        Stage.listen();
+      }
     },
 
     /** “我已说完，继续”：没识别到文字时，用这一轮的标准说法推进对话。 */
@@ -1497,6 +1854,8 @@
     },
 
     restart: function () {
+      this.token++;
+      this.interruptedText = "";
       if (this.mode === "ai") { this.openAI("", ""); return; }
       if (this.scenario) this.openScenario(this.scenario);
     },
@@ -1512,77 +1871,215 @@
       return hit / groups.length;
     },
 
-    send: function (text) {
+    /** 在整个情景里找最贴近的一轮（用户可能直接说了后面的台词） */
+    bestTurn: function (msg) {
+      if (!this.scenario || !this.scenario.turns) return null;
+      let best = null;
+      for (let i = 0; i < this.scenario.turns.length; i++) {
+        const r = this.evaluate(msg, this.scenario.turns[i]);
+        if (!best || r > best.ratio) best = { idx: i, ratio: r };
+      }
+      return best;
+    },
+
+    /**
+     * 中文提问：离线也能接住。
+     * 支持「什么意思 / 怎么说 / 再说一遍 / 慢一点 / 继续」等常见请求，
+     * 其它中文就当成问题，用中文解释这一轮，并把英文说法读出来。
+     */
+    chineseTurn: function (msg, interrupted) {
+      const turn = this.currentTurn();
+      const self = this;
+      if (!turn && !this.finished) return false;
+      const m = String(msg).replace(/\s+/g, "");
+      const wantRepeat = /再说|重复|没听清|听不清|再读|again/i.test(m);
+      const wantSlow = /慢一点|慢点|说慢|太快|slow/i.test(m);
+      const wantMean = /什么意思|啥意思|翻译|不懂|不明白|解释|意思/.test(m);
+      const wantHelp = /怎么说|怎么回答|怎么用英语|我该说|该说什么|教我|怎么讲/.test(m);
+      const wantNext = /下一句|下一个|继续|往下|goon|next/i.test(m);
+
+      if (this.finished) {
+        if (wantNext) { this.sys("这个情景已经走完了，可以点“重来”，或者换一个情景。", null); return true; }
+        return false;
+      }
+
+      if (wantRepeat) {
+        this.sys("🔁 再听一遍这一句：", turn.en);
+        this.speakAs(turn.en, function () { if (Ear.on) Ear.relax(); });
+        return true;
+      }
+      if (wantSlow) {
+        State.settings.speed = Math.max(0.6, Math.round((Number(State.settings.speed || 1) - 0.15) * 100) / 100);
+        saveSettings();
+        this.sys("🐢 语速已经调慢到 " + fmtSpeed(State.settings.speed) + "，再听一遍：", null);
+        this.speakAs(turn.en, function () { if (Ear.on) Ear.relax(); });
+        return true;
+      }
+      if (wantMean) {
+        this.sys("📖 对方说的是：「" + esc(turn.en) + "」<br>意思是：" + esc(turn.zh || ""), null);
+        this.speakAs((turn.zh || "") + "。英文是：" + turn.en, function () { if (Ear.on) Ear.relax(); });
+        return true;
+      }
+      if (wantHelp) {
+        this.sys("🗣️ 这一轮可以这样回答：", turn.model);
+        this.speakAs("可以这样回答：" + (turn.model || turn.en), function () { if (Ear.on) Ear.relax(); });
+        return true;
+      }
+      if (wantNext) {
+        this.sys("👉 好，我们往下走。", null);
+        const token = this.token;
+        setTimeout(function () {
+          if (token !== self.token) return;
+          self.step++;
+          const n = self.currentTurn();
+          if (n) self.partnerLine(n, true);
+          else self.finishScenario();
+        }, 320);
+        return true;
+      }
+
+      // 其它中文：当成提问，用中文解释这一轮 + 英文示范
+      this.sys("💬 中文提问我听得懂。对方的意思是：" + esc(turn.zh || "") + " 你可以用英文这样回答：", turn.model);
+      this.speakAs("你可以这样回答：" + (turn.model || turn.en), function () { if (Ear.on) Ear.relax(); });
+      return true;
+    },
+
+    finishScenario: function () {
+      if (this.finished) return;
+      this.finished = true;
+      State.done[this.scenario.id] = true;
+      LS.set("erc.done", State.done);
+      const self = this;
+      const token = this.token;
+      const closing = this.scenario.closing;
+      setTimeout(function () {
+        if (token !== self.token) return;
+        if (closing) self.partnerLine({ en: closing.en, zh: closing.zh, tip: "" }, true);
+        self.sys("🎉 这个情景走完了。想再来一遍可以点“重来”；打开 🎧 耳机连麦，就能像打电话一样接着聊。", null);
+        if (!State.settings.autoTurn && !LS.get("erc.autoTip", false)) {
+          LS.set("erc.autoTip", true);
+          toast("小提示：打开 🎧 耳机连麦，说完自动接话，还随时能打断");
+        }
+      }, 420);
+    },
+
+    /** 情景走完后用户还在说：自然接一句，别当机 */
+    afterEndChatter: function (msg) {
+      const self = this;
+      const ack = pickAck();
+      this.addMe(msg);
+      $("chatText").value = "";
+      this.sys("👂 " + esc(ack) + "（这个情景已经走完，还可以接着聊）", null);
+      this.speakAs(ack + " We finished that scene — tell me anything else, or say “again” to replay it.",
+        function () { if (Ear.on) Ear.relax(); });
+      this.lastChatter = Date.now();
+    },
+
+    send: function (text, opts) {
+      opts = opts || {};
       const msg = String(text || "").trim();
       if (!msg || this.busy) return;
+      const lang = opts.lang || (hasChinese(msg) ? "zh" : "en");
+      const interrupted = this.interruptedText;
+      this.interruptedText = "";
 
       if (this.mode === "ai") {
-        this.sendAI(msg);
+        this.sendAI(msg, lang, interrupted);
         return;
       }
 
+      // 中文提问 / 学习请求（离线也能答）
+      if (lang === "zh" || hasChinese(msg)) {
+        if (this.chineseTurn(msg, interrupted)) return;
+      }
+
       const turn = this.currentTurn();
-      if (!turn || this.finished) { toast("这个场景已经结束了，可以点“重来”"); return; }
+      if (!turn || this.finished) {
+        if (this.finished) { this.afterEndChatter(msg); return; }
+        toast("这个场景已经结束了，可以点“重来”");
+        return;
+      }
 
       this.addMe(msg);
       $("chatText").value = "";
       Sf.hide();
-      const ratio = this.evaluate(msg, turn);
       const self = this;
+      const token = this.token;
+      const ratio = this.evaluate(msg, turn);
+      const best = this.bestTurn(msg);
       let praise = null;
+      let jumpTo = -1;
+      const ack = pickAck();
 
-      if (ratio >= 0.99) {
+      if (interrupted) {
+        // 被打断：顺着用户新说的内容接话，绝不重复被打断的旧句
+        Stage.setState("thinking");
+        if (best && best.ratio >= 0.5 && best.idx >= this.step) {
+          jumpTo = best.idx;
+          praise = this.scenario.turns[best.idx].model;
+          this.sys("👂 接住你的话 —— 这句更自然：", praise);
+        } else if (ratio >= 0.4) {
+          praise = turn.model;
+          this.sys("👂 好，接着聊 —— 这样说更自然：", praise);
+        } else {
+          praise = ack + " " + (turn.model || "");
+          this.sys("👂 我听懂你换了话题：我们接着练这一轮。", turn.model);
+        }
+      } else if (ratio >= 0.99) {
         this.sys("✅ " + turn.good, null);
         Stage.celebrate();
-        praise = null;
       } else if (ratio >= 0.5) {
         this.sys("👍 意思到了。" + turn.mid + " 更自然一点：", turn.model);
         Stage.setState("thinking");
         praise = turn.model;
+      } else if (best && best.ratio >= 0.5 && best.idx > this.step) {
+        // 说了后面某一轮的台词：直接跳过去，不卡在原地
+        jumpTo = best.idx;
+        praise = this.scenario.turns[best.idx].model;
+        this.sys("💬 这句更像后面的情景，我们跳过去 —— 可以这样说：", praise);
       } else {
-        this.sys("🤔 我理解你的意思，不过这次可以更直接一点。跟着读一遍：", turn.model);
-        Stage.setState("thinking");
-        praise = turn.model;
+        praise = ack + " " + (turn.model || "");
+        this.sys("💬 先接住你的话：" + esc(ack) + " 这一轮可以这样说：", turn.model);
       }
 
       const proceed = function () {
+        if (token !== self.token) return;
+        if (jumpTo >= 0) self.step = jumpTo;
         self.step++;
         const nextTurn = self.currentTurn();
         if (nextTurn) {
-          setTimeout(function () { self.partnerLine(nextTurn, true); }, 420);
-        } else {
-          self.finished = true;
-          State.done[self.scenario.id] = true;
-          LS.set("erc.done", State.done);
-          const closing = self.scenario.closing;
           setTimeout(function () {
-            if (closing) self.partnerLine({ en: closing.en, zh: closing.zh, tip: "" }, true);
-            self.sys("🎉 这个场景走完了。想再来一遍可以点“重来”；打开 🎧 连续对话，就能像面对面一样接着聊。", null);
-            if (!State.settings.autoTurn && !LS.get("erc.autoTip", false)) {
-              LS.set("erc.autoTip", true);
-              toast("小提示：打开 🎧 连续对话，说完自动接话，更像真人");
-            }
+            if (token !== self.token) return;
+            self.partnerLine(nextTurn, true);
           }, 420);
+        } else {
+          self.finishScenario();
         }
       };
 
-      if (praise) {
-        this.speakAs(praise, proceed);
-      } else {
-        setTimeout(proceed, 620);
-      }
+      if (praise) this.speakAs(praise, proceed);
+      else setTimeout(proceed, 620);
     },
 
-    sendAI: function (msg) {
+    sendAI: function (msg, lang, interrupted) {
       this.addMe(msg);
       $("chatText").value = "";
       Sf.hide();
-      this.aiHistory.push({ role: "user", content: msg });
+      this.busy = false;
+      let content = msg;
+      if (interrupted) {
+        content = msg + "\n\n[系统提示：用户刚刚打断了你，你被打断时正在说的那句是：「" + interrupted +
+          "」。请顺着用户这次新说的内容自然接话，不要重复被打断的旧句子，也不要问“我刚才说到哪了”。]";
+      } else if (lang === "zh") {
+        content = msg + "\n\n[系统提示：用户这次用中文提问，请用简体中文解释清楚，并给出 1-2 个英文例句，最后用一句英文把对话带回英语。]";
+      }
+      this.aiHistory.push({ role: "user", content: content });
       this.busy = true;
       const self = this;
       if (!AI.configured()) {
         this.sys("还没配置 AI 接口，先去“设置 → AI 自由外教”填一下。", null);
         this.busy = false;
+        if (Ear.on) Ear.relax();
         return;
       }
       $("chatHintLine").textContent = "AI 正在想…";
@@ -1590,13 +2087,14 @@
       AI.chat(this.aiContext, this.aiHistory)
         .then(function (reply) {
           self.busy = false;
-          $("chatHintLine").textContent = "提示：回复会自动朗读；说错了我会在下面用中文提醒你。";
+          $("chatHintLine").textContent = "提示：回复会自动朗读；用中文问语法和意思也可以。";
           const parsed = parseAIReply(reply);
           self.aiHistory.push({ role: "assistant", content: reply });
           self.addPartner(parsed.en, "");
           if (parsed.tip) self.sys("💡 " + parsed.tip, null);
           self.speakAs(parsed.en, function () {
-            if (State.settings.autoTurn && ASR.available()) self.startListen();
+            if (Ear.on) Ear.relax();
+            else if (State.settings.autoTurn && ASR.available()) self.startListen();
             else Stage.listen();
           });
         })
@@ -1605,6 +2103,7 @@
           $("chatHintLine").textContent = "";
           Stage.settle();
           self.sys("请求失败：" + esc(e.message) + "。检查一下接口地址、模型名和 Key，或者稍后再试。", null);
+          if (Ear.on) Ear.relax();
         });
     }
   };
@@ -1650,11 +2149,14 @@
     },
 
     systemPrompt: function () {
-      return "你是一位耐心的英语口语陪练，学生是中国学习者，年龄不限，水平从入门到中级。" +
-        "规则：1) 用自然、简短的英语回复，最多 3 句，像真人聊天，不要长篇大论，不要用列表。2) 如果对方有明显的语法或用词错误，" +
-        "先自然地接住对方的意思，然后在最后单独一行以“TIP: ”开头，用简体中文指出一个最主要的改进点，并给出更地道的说法。" +
-        "3) 如果对方只是聊天，不要每次都纠错，两天一次提醒就够频繁。4) 主动提一个简单的问题，让对话继续。" +
-        "5) 内容健康、适合青少年；不要索要真实姓名、住址、学校等隐私信息。";
+      return "你是一位中英双语的口语陪练老师（可能是 Buddy / Emma / Alex 中的一位），学生是中国学习者，年龄不限，水平从入门到中级。" +
+        "规则：" +
+        "1) 默认用自然、简短、口语化的英语回应，每次最多 2-3 句，像真人打电话聊天，不要长篇大论，不要用列表；说完主动提一个简单的问题让对话继续。" +
+        "2) 如果学生用中文提问（例如“什么意思”“怎么用英语说”“语法解释一下”“帮我纠正”“再说一遍”），就用简体中文清楚解释，给出 1-2 个地道英文例句，最后用一句英文把对话带回英语。" +
+        "3) 学生中英文混着说时，顺着他的意思回应，不要说“请说英语”之类的话。" +
+        "4) 这是实时语音对话：你随时可能被学生打断。被打断后立刻顺着学生新说的内容接话，不要重复被打断的旧句子，也不要问“我刚才说到哪了”。" +
+        "5) 如果对方有明显的语法或用词错误，先自然接住对方的意思，然后在最后单独一行以“TIP: ”开头，用简体中文指出一个最主要的改进点，并给出更地道的说法；只是聊天时不必每次都纠错。" +
+        "6) 内容健康、适合青少年；不要索要真实姓名、住址、学校等隐私信息。";
     },
 
     buildMessages: function (context, history) {
@@ -2144,6 +2646,13 @@
     $("btnRestart").addEventListener("click", function () { Chat.restart(); });
     $("btnZhChat").addEventListener("click", function () { Chat.toggleZh(); });
 
+    // 耳机后台连麦
+    if ($("btnEar")) $("btnEar").addEventListener("click", function () { Ear.toggle(); });
+    if ($("btnEarChat")) $("btnEarChat").addEventListener("click", function () { Ear.toggle(); });
+    document.querySelectorAll("[data-lang]").forEach(function (b) {
+      b.addEventListener("click", function () { Ear.setLang(b.dataset.lang); });
+    });
+
     // 设置里的分段
     $("setFontSeg").addEventListener("click", function (e) {
       const b = e.target.closest("button");
@@ -2216,11 +2725,13 @@
     applySettings();
     Stage.personaId = currentConvTier;
     Stage.mount();
+    Ear.load();
+    Ear.render();
     $("btnShowMastered").classList.toggle("on", State.showMastered);
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.0.1";
+      $("aboutVersion").textContent = "版本 1.1.0";
     }
     renderLibrary();
     renderScenarios();

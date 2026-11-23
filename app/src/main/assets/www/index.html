@@ -95,6 +95,22 @@
     <!-- ================= 对话列表 ================= -->
     <section class="view" id="view-conv">
       <div data-stage></div>
+
+      <button class="ear-toggle" id="btnEar" aria-pressed="false">
+        <span class="ear-ico">🎧</span>
+        <span class="ear-main">
+          <b id="earTitle">🎧 耳机后台连麦</b>
+          <span class="ear-sub" id="earSub">像打电话一样聊：熄屏、切到别的应用都能说，随时可以打断，中文提问也听得懂</span>
+        </span>
+        <span class="ear-switch" id="earSwitch"></span>
+      </button>
+      <div class="ear-lang">
+        <button class="chip" data-lang="auto">中英自动</button>
+        <button class="chip" data-lang="en">🇺🇸 英文聊</button>
+        <button class="chip" data-lang="zh">🇨🇳 中文提问</button>
+        <span class="tiny ear-tip">离线识别，不联网也能用</span>
+      </div>
+
       <div class="stage-tiers" id="stageTiers">
         <button data-tier="kids" class="persona-btn on">🧸 Buddy</button>
         <button data-tier="teen" class="persona-btn">🎒 Emma</button>
@@ -119,6 +135,7 @@
       <div class="chat-stream" id="chatStream"></div>
       <div class="chat-dock">
         <div class="chat-tools" id="chatTools">
+          <button class="chip" id="btnEarChat">🎧 耳机连麦</button>
           <button class="chip" id="btnHint">💡 提示</button>
           <button class="chip" id="btnRestart">🔄 重来</button>
           <button class="chip" id="btnZhChat">中文对照</button>
@@ -279,6 +296,8 @@
         <h3>关于与隐私</h3>
         <p>· 不含广告、不含统计埋点、不读取通讯录和短信，只申请麦克风权限（跟读与语音回答时使用）。</p>
         <p>· 书库、离线词库、情景对话全部打包在安装包里，飞行模式也能正常使用。</p>
+        <p>· 语音识别用的是打包在安装包里的 Vosk 离线模型（英文 + 中文），语音不会离开手机；系统 TTS 朗读同样在本机完成。</p>
+        <p>· 「耳机后台连麦」会在前台放一条通知（这是系统要求，否则熄屏后麦克风会被收回）；点通知上的「结束对话」即可停止。</p>
         <p>· 只有两种情况会联网：你主动点“联网查词”，或你自己配置了 AI 接口并主动发消息。你填的接口地址和密钥只保存在本机，只发送到你填写的那个地址。</p>
         <p>· 生词本、已读进度、学习设置都保存在本机，卸载即清除。</p>
         <p class="tiny" id="aboutVersion"></p>

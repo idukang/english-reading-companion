@@ -11,8 +11,8 @@ android {
         applicationId = "com.idukang.readingcompanion"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -53,8 +53,19 @@ android {
     buildFeatures {
         buildConfig = true
     }
+
+    // JNA 需要把 .so 解压到 nativeLibraryDir 才能 System.loadLibrary("vosk")，
+    // 所以这里用传统打包方式（extractNativeLibs=true）。
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
-    // 无第三方依赖：仅 Kotlin 标准库（由 Kotlin 插件自动加入），APK 体积小、无任何追踪 SDK
+    // 唯一的一组第三方依赖：离线语音识别（Vosk）。
+    // 本地运行、不联网、不上报；模型文件打包在 assets 里。
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 }
