@@ -53,8 +53,8 @@ object SherpaEngine {
     private const val ASSET_TOKENS = "sense-voice/tokens.txt"
     private const val ASSET_VAD = "silero_vad_v4.onnx"
 
-    private const val BARGE_GUARD_MS = 250L        // AI 刚开始说话时留一点启动余量
-    private const val BARGE_WINDOWS = 5            // 连续 5 × 32ms ≈ 160ms 人声才打断
+    private const val BARGE_GUARD_MS = 180L        // AI 刚开始说话时留一点启动余量
+    private const val BARGE_WINDOWS = 3            // 连续 3 × 32ms ≈ 96ms 人声即打断
     private const val ECHO_TAIL_MS = 600L          // 朗读结束后残留回声的容忍时间
     private const val MIN_SEGMENT_SAMPLES = 0.22 * SAMPLE_RATE   // 太短的片段不送去识别
     private const val MAX_SEGMENT_SAMPLES = 22 * SAMPLE_RATE     // 兜底：超过 22 秒强行收尾
@@ -193,8 +193,8 @@ object SherpaEngine {
             sileroVadModelConfig = SileroVadModelConfig(
                 model = modelPath,
                 threshold = 0.50f,
-                minSilenceDuration = 0.55f,
-                minSpeechDuration = 0.18f,
+                minSilenceDuration = 0.32f,
+                minSpeechDuration = 0.14f,
                 windowSize = WINDOW,
                 maxSpeechDuration = 20.0f
             ),

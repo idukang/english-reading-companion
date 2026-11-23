@@ -28,6 +28,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 英语陪读 —— 单 Activity + WebView 外壳。
@@ -1146,6 +1147,145 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
                             jsStr(reqId) + ",0," + jsStr("{\"error\":\"" + msg + "\"}") + ")"
                     )
                 } finally {
+                    try {
+                        conn?.disconnect()
+                    } catch (e: Exception) {
+                    }
+                }
+            }).start()
+        }
+
+        private val activeStreams = ConcurrentHashMap<String, HttpURLConnection>()
+
+        @JavascriptInterface
+        fun cancelHttp(reqId: String) {
+            val c = activeStreams.remove(reqId) ?: return
+            Thread(Runnable {
+                try {
+                    c.disconnect()
+                } catch (e: Exception) {
+                }
+            }).start()
+        }
+
+        @JavascriptInterface
+        fun httpStream(reqId: String, method: String, url: String, headersJson: String, body: String) {
+            val target = url.trim()
+            if (!target.startsWith("https://", ignoreCase = true)) {
+                emit(
+                    "window.Native && window.Native.onHttpStreamError && window.Native.onHttpStreamError(" +
+                        jsStr(reqId) + ",0," + jsStr("只允许访问 https 地址") + ")"
+                )
+                return
+            }
+            Thread(Runnable {
+                var conn: HttpURLConnection? = null
+                try {
+                    val u = URL(target)
+                    val c = u.openConnection() as HttpURLConnection
+                    conn = c
+                    activeStreams[reqId] = c
+                    c.requestMethod = if (method.isBlank()) "POST" else method.uppercase(Locale.US)
+                    c.connectTimeout = 15000
+                    c.readTimeout = 45000
+                    c.instanceFollowRedirects = true
+                    try {
+                        val obj = JSONObject(if (headersJson.isBlank()) "{}" else headersJson)
+                        val keys = obj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            val v = obj.optString(k, "")
+                            if (v.isNotEmpty()) c.setRequestProperty(k, v)
+                        }
+                    } catch (e: Exception) {
+                    }
+                    if (c.requestMethod != "GET" && body.isNotEmpty()) {
+                        val bytes = body.toByteArray(Charsets.UTF_8)
+                        c.doOutput = true
+                        c.setRequestProperty("Content-Length", bytes.size.toString())
+                        val os = c.outputStream
+                        os.write(bytes)
+                        os.flush()
+                        os.close()
+                    }
+                    val code = c.responseCode
+                    if (code !in 200..299) {
+                        val err = try {
+                            (c.errorStream ?: c.inputStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                        } catch (e: Exception) {
+                            ""
+                        }
+                        emit(
+                            "window.Native && window.Native.onHttpStreamError && window.Native.onHttpStreamError(" +
+                                jsStr(reqId) + "," + code + "," + jsStr(err) + ")"
+                        )
+                        return@Runnable
+                    }
+                    val ct = (c.contentType ?: "").lowercase(Locale.US)
+                    val reader = c.inputStream.bufferedReader(Charsets.UTF_8)
+                    val full = StringBuilder()
+                    if (!ct.contains("text/event-stream")) {
+                        val raw = reader.readText()
+                        val parsed = try {
+                            val j = JSONObject(raw)
+                            j.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content", "") ?: ""
+                        } catch (e: Exception) {
+                            ""
+                        }
+                        if (parsed.isNotEmpty()) {
+                            full.append(parsed)
+                            emit(
+                                "window.Native && window.Native.onHttpStreamChunk && window.Native.onHttpStreamChunk(" +
+                                    jsStr(reqId) + "," + jsStr(parsed) + "," + jsStr(full.toString()) + ")"
+                            )
+                        }
+                        emit(
+                            "window.Native && window.Native.onHttpStreamDone && window.Native.onHttpStreamDone(" +
+                                jsStr(reqId) + "," + jsStr(full.toString()) + ")"
+                        )
+                        return@Runnable
+                    }
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        if (!activeStreams.containsKey(reqId)) break
+                        val l = line?.trim() ?: continue
+                        if (!l.startsWith("data:")) continue
+                        val payload = l.removePrefix("data:").trim()
+                        if (payload == "[DONE]") break
+                        val delta = try {
+                            val j = JSONObject(payload)
+                            val choices = j.optJSONArray("choices")
+                            val c0 = choices?.optJSONObject(0)
+                            c0?.optJSONObject("delta")?.optString("content", "")
+                                ?: c0?.optJSONObject("message")?.optString("content", "")
+                                ?: ""
+                        } catch (e: Exception) {
+                            ""
+                        }
+                        if (delta.isNotEmpty()) {
+                            full.append(delta)
+                            emit(
+                                "window.Native && window.Native.onHttpStreamChunk && window.Native.onHttpStreamChunk(" +
+                                    jsStr(reqId) + "," + jsStr(delta) + "," + jsStr(full.toString()) + ")"
+                            )
+                        }
+                    }
+                    if (activeStreams.containsKey(reqId)) {
+                        emit(
+                            "window.Native && window.Native.onHttpStreamDone && window.Native.onHttpStreamDone(" +
+                                jsStr(reqId) + "," + jsStr(full.toString()) + ")"
+                        )
+                    }
+                } catch (e: Exception) {
+                    if (activeStreams.containsKey(reqId)) {
+                        val msg = (e.message ?: "网络请求失败").replace("\"", "'")
+                        emit(
+                            "window.Native && window.Native.onHttpStreamError && window.Native.onHttpStreamError(" +
+                                jsStr(reqId) + ",0," + jsStr(msg) + ")"
+                        )
+                    }
+                } finally {
+                    activeStreams.remove(reqId)
                     try {
                         conn?.disconnect()
                     } catch (e: Exception) {

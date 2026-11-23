@@ -95,6 +95,9 @@
     seq: 0,
     current: null,
     pending: {},
+    queue: [],
+    queueOpts: null,
+    streamPending: false,
 
     speak: function (text, opts) {
       opts = opts || {};
@@ -115,6 +118,50 @@
       }
       this.fallback(text, opts);
       return id;
+    },
+
+    enqueue: function (text, opts) {
+      const t = String(text || "").trim();
+      if (!t) return;
+      if (opts) this.queueOpts = opts;
+      if (!this.current && this.queue.length === 0) {
+        const qo = this.queueOpts || {};
+        this.speak(t, {
+          rate: qo.rate,
+          lang: qo.lang,
+          onStart: qo.onFirstStart,
+          onEnd: function () { TTS._drainQueue(); }
+        });
+      } else {
+        this.queue.push(t);
+      }
+    },
+
+    _drainQueue: function () {
+      if (this.queue.length > 0) {
+        const next = this.queue.shift();
+        const qo = this.queueOpts || {};
+        this.speak(next, {
+          rate: qo.rate,
+          lang: qo.lang,
+          onEnd: function () { TTS._drainQueue(); }
+        });
+        return;
+      }
+      if (!this.streamPending && this.queueOpts && this.queueOpts.onAllEnd) {
+        const done = this.queueOpts.onAllEnd;
+        this.queueOpts = null;
+        done();
+      }
+    },
+
+    finishStreamQueue: function () {
+      this.streamPending = false;
+      if (!this.current && this.queue.length === 0 && this.queueOpts && this.queueOpts.onAllEnd) {
+        const done = this.queueOpts.onAllEnd;
+        this.queueOpts = null;
+        done();
+      }
     },
 
     fallback: function (text, opts) {
@@ -138,6 +185,9 @@
     stop: function () {
       this.current = null;
       this.pending = {};
+      this.queue = [];
+      this.queueOpts = null;
+      this.streamPending = false;
       if (Bridge) { try { Bridge.stopSpeak(); } catch (e) {} }
       if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch (e) {} }
     }
@@ -148,6 +198,48 @@
   const Http = {
     seq: 0,
     pending: {},
+    streams: {},
+
+    cancelStream: function (id) {
+      if (!id) return;
+      delete this.streams[id];
+      if (Bridge && Bridge.cancelHttp) {
+        try { Bridge.cancelHttp(id); } catch (e) {}
+      }
+    },
+
+    stream: function (method, url, headers, body, handlers) {
+      const id = "s" + (++this.seq);
+      this.streams[id] = handlers || {};
+      if (Bridge && Bridge.httpStream) {
+        try {
+          Bridge.httpStream(id, method, url, JSON.stringify(headers || {}), body == null ? "" : body);
+          return id;
+        } catch (e) {
+          delete this.streams[id];
+        }
+      }
+      // Fallback to non-streaming request
+      this.request(method, url, headers, body).then(function (text) {
+        let content = "";
+        try {
+          const data = JSON.parse(text);
+          if (data.error) throw new Error(data.error.message || data.error.code || "接口返回错误");
+          if (data.choices && data.choices[0]) {
+            const c = data.choices[0];
+            content = (c.message && c.message.content) || c.text || "";
+          }
+        } catch (e) {
+          if (handlers && handlers.onError) handlers.onError(0, e.message);
+          return;
+        }
+        if (handlers && handlers.onChunk && content) handlers.onChunk(content, content);
+        if (handlers && handlers.onDone) handlers.onDone(content);
+      }).catch(function (e) {
+        if (handlers && handlers.onError) handlers.onError(0, e.message);
+      });
+      return id;
+    },
     request: function (method, url, headers, body) {
       return new Promise(function (resolve, reject) {
         if (!/^https:\/\//i.test(url || "")) {
@@ -268,6 +360,23 @@
       const p = Http.pending[id];
       if (!p) return;
       p.ok(code, body);
+    },
+
+    onHttpStreamChunk: function (id, delta, full) {
+      const s = Http.streams[id];
+      if (s && s.onChunk) s.onChunk(delta, full);
+    },
+
+    onHttpStreamDone: function (id, full) {
+      const s = Http.streams[id];
+      delete Http.streams[id];
+      if (s && s.onDone) s.onDone(full);
+    },
+
+    onHttpStreamError: function (id, code, msg) {
+      const s = Http.streams[id];
+      delete Http.streams[id];
+      if (s && s.onError) s.onError(code, msg);
     },
 
     onAsrState: function (state, msg) {
@@ -1730,6 +1839,7 @@
         "</div>";
       stream.appendChild(div);
       stream.scrollTop = stream.scrollHeight;
+      return div;
     },
 
     addMe: function (text) {
@@ -1870,9 +1980,14 @@
       }
     },
 
-    /** 用户打断了 AI：作废所有排队中的台词和推进 */
+    /** 用户打断了 AI：作废所有排队中的台词、取消流式请求和推进 */
     onBargeIn: function (text) {
       this.token++;
+      this.busy = false;
+      if (this.activeStreamId) {
+        Http.cancelStream(this.activeStreamId);
+        this.activeStreamId = null;
+      }
       this.interruptedText = text || "";
       if (currentView === "chat") {
         $("chatHintLine").textContent = "你打断了 —— 接着说，我听着";
@@ -2155,27 +2270,101 @@
       }
       $("chatHintLine").textContent = "AI 正在想…";
       Stage.think();
-      AI.chat(this.aiContext, this.aiHistory)
-        .then(function (reply) {
+      const myToken = this.token;
+      const p = this.persona();
+      const bubble = this.addPartner("…", "");
+      const enEl = bubble ? bubble.querySelector(".b-en") : null;
+      const btnEl = bubble ? bubble.querySelector('[data-act="speak-text"]') : null;
+      const streamEl = $("chatStream");
+      let spokenOffset = 0;
+      let tipCut = false;
+
+      TTS.stop();
+      TTS.streamPending = true;
+      TTS.queueOpts = {
+        rate: Math.max(0.75, Math.min(1.25, (State.settings.speed || 1.0) * p.rate)),
+        lang: State.settings.accent || "en-US",
+        onFirstStart: function () {
+          Stage.speak();
+          if (Ear.on) Ear.armBargeIn(enEl ? enEl.textContent : "");
+          else if (ASR.available()) ASR.armBargeIn(enEl ? enEl.textContent : "");
+        },
+        onAllEnd: function () {
+          if (myToken !== self.token) return;
+          if (Ear.on) Ear.relax();
+          else if (State.settings.autoTurn && ASR.available()) self.startListen();
+          else Stage.listen();
+        }
+      };
+
+      const flushSentences = function (fullText, isFinal) {
+        if (tipCut) return;
+        const tipIdx = fullText.search(/\n\s*(TIP|Tip|tip|提示)\s*[:：]/);
+        const speakableEnd = tipIdx >= 0 ? tipIdx : fullText.length;
+        if (tipIdx >= 0) tipCut = true;
+        const slice = fullText.slice(spokenOffset, speakableEnd);
+        if (!slice) return;
+        if (isFinal) {
+          const tail = slice.trim();
+          spokenOffset = speakableEnd;
+          if (tail) TTS.enqueue(tail);
+          return;
+        }
+        const re = /[.!?。！？\n]/g;
+        let lastCut = -1;
+        let m;
+        while ((m = re.exec(slice)) !== null) {
+          if (m.index + 1 >= 6) lastCut = m.index + 1;
+        }
+        if (lastCut > 0) {
+          const chunk = slice.slice(0, lastCut).trim();
+          spokenOffset += lastCut;
+          if (chunk) TTS.enqueue(chunk);
+        }
+      };
+
+      this.activeStreamId = AI.chatStream(this.aiContext, this.aiHistory, {
+        onChunk: function (delta, fullText) {
+          if (myToken !== self.token) return;
+          const parsed = parseAIReply(fullText);
+          if (enEl) enEl.textContent = parsed.en || "…";
+          if (btnEl) btnEl.setAttribute("data-text", parsed.en || "");
+          if (streamEl) streamEl.scrollTop = streamEl.scrollHeight;
+          $("chatHintLine").textContent = "正在回复并同步朗读…";
+          flushSentences(fullText, false);
+        },
+        onDone: function (reply) {
+          self.activeStreamId = null;
+          if (myToken !== self.token) return;
           self.busy = false;
+          if (!reply) {
+            TTS.finishStreamQueue();
+            if (bubble && bubble.parentNode) bubble.parentNode.removeChild(bubble);
+            self.sys("请求未返回内容，请稍后再试。", null);
+            if (Ear.on) Ear.relax();
+            return;
+          }
           $("chatHintLine").textContent = "提示：回复会自动朗读；用中文问语法和意思也可以。";
           const parsed = parseAIReply(reply);
+          if (enEl) enEl.textContent = parsed.en;
+          if (btnEl) btnEl.setAttribute("data-text", parsed.en);
           self.aiHistory.push({ role: "assistant", content: reply });
-          self.addPartner(parsed.en, "");
           if (parsed.tip) self.sys("💡 " + parsed.tip, null);
-          self.speakAs(parsed.en, function () {
-            if (Ear.on) Ear.relax();
-            else if (State.settings.autoTurn && ASR.available()) self.startListen();
-            else Stage.listen();
-          });
-        })
-        .catch(function (e) {
+          flushSentences(reply, true);
+          TTS.finishStreamQueue();
+        },
+        onError: function (code, errMsg) {
+          self.activeStreamId = null;
+          TTS.stop();
+          if (myToken !== self.token) return;
           self.busy = false;
+          if (bubble && bubble.parentNode) bubble.parentNode.removeChild(bubble);
           $("chatHintLine").textContent = "";
           Stage.settle();
-          self.sys("请求失败：" + esc(e.message) + "。检查一下接口地址、模型名和 Key，或者稍后再试。", null);
+          self.sys("请求失败（" + esc(String(code || "")) + "）：" + esc(errMsg || "请检查网络或接口配置") + "。", null);
           if (Ear.on) Ear.relax();
-        });
+        }
+      });
     }
   };
 
@@ -2234,6 +2423,21 @@
       const msgs = [{ role: "system", content: this.systemPrompt() + (context ? "\n\n" + context : "") }];
       for (let i = 0; i < history.length; i++) msgs.push(history[i]);
       return msgs;
+    },
+
+    chatStream: function (context, history, handlers) {
+      const a = State.ai;
+      const body = JSON.stringify({
+        model: a.model,
+        messages: this.buildMessages(context, history),
+        temperature: 0.7,
+        max_tokens: 320,
+        stream: true
+      });
+      return Http.stream("POST", a.endpoint, {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + a.key
+      }, body, handlers);
     },
 
     chat: function (context, history) {
