@@ -138,9 +138,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
         webView.addJavascriptInterface(Bridge(), "AndroidBridge")
         webView.loadUrl("file:///android_asset/www/index.html")
 
-        // 离线语音：先挂上监听，真正载入模型由网页层按需触发（进对话页时预载）
+        // 离线语音：先挂上监听，并在启动时就把中英两套模型一起热起来。
+        // 之前只在进对话页时才载入，用户第一句话常常只有英文识别器在工作，中文会被听成英文。
         VoskEngine.attach(this)
         VoskEngine.setCallback(this)
+        VoskEngine.warmup(applicationContext)
 
         try {
             tts = TextToSpeech(this, this)

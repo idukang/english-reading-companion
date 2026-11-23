@@ -6,6 +6,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.os.SystemClock
+import android.util.Log
 import org.json.JSONObject
 import org.vosk.LibVosk
 import org.vosk.LogLevel
@@ -50,17 +51,22 @@ object VoskEngine {
     private const val MAX_UTTERANCE_MS = 24000L
     private const val BARGE_GUARD_MS = 300L
     private const val PARTIAL_EVERY_MS = 160L
+    private const val TAG = "VoskEngine"
+
+    /** 等中文模型的最长时间；超时先让英文模型顶上，至少不静音 */
+    private const val ZH_WAIT_MS = 1200L
 
     @Volatile var listener: Listener? = null
 
     // ---------- 模型 ----------
-    private var modelEn: Model? = null
-    private var modelZh: Model? = null
+    @Volatile private var modelEn: Model? = null
+    @Volatile private var modelZh: Model? = null
     private var modelLock = Any()
     @Volatile private var prepared = false
     @Volatile private var preparing = false
     @Volatile private var zhTried = false
     @Volatile private var zhLoading = false
+    @Volatile private var zhFailed = false
     @Volatile private var mode = MODE_AUTO
     @Volatile private var pendingStart = false
     @Volatile private var pendingStartBargeIn = false
@@ -128,6 +134,8 @@ object VoskEngine {
 
     fun isReady(): Boolean = prepared && modelEn != null
 
+    fun isZhReady(): Boolean = modelZh != null
+
     private fun assetsNonEmpty(ctx: Context, path: String): Boolean = try {
         val list = ctx.assets.list(path)
         list != null && list.isNotEmpty()
@@ -136,23 +144,43 @@ object VoskEngine {
     }
 
     fun setLanguageMode(m: String) {
-        mode = when (m) {
+        val next = when (m) {
             MODE_EN, "english", "en-US" -> MODE_EN
             MODE_ZH, "chinese", "zh-CN" -> MODE_ZH
             else -> MODE_AUTO
         }
-        if (mode != MODE_EN) ensureChineseModel()
+        val prev = mode
+        mode = next
+        if (next != MODE_EN) ensureChineseModel()
+        // 切到“中文优先 / 英文”后立刻按新语言重开识别器，不让旧模型的识别器继续跑：
+        // 选中文 = 100% 走中文模型，英文模型一个结果都不收。
+        if (next != prev && running) {
+            val barge = bargeInMode
+            quietStop = true
+            stopListeningInternal(true)
+            quietStop = false
+            startListening(barge)
+        }
     }
 
     fun setCallback(l: Listener?) {
         listener = l
     }
 
+    /** 应用启动时调用：英文 + 中文两套模型一起热起来，进对话页立刻能用中文。 */
+    fun warmup(ctx: Context) {
+        prepare(ctx)
+    }
+
     /** 在后台把模型准备好（解包 + 载入）。重复调用安全。 */
     fun prepare(ctx: Context) {
         val app = ctx.applicationContext
+        appCtx = app
         if (prepared || preparing) {
-            if (prepared) emitState("ready", "离线语音已就绪")
+            if (prepared) {
+                emitState("ready", "离线英文语音已就绪")
+                ensureChineseModel()
+            }
             return
         }
         synchronized(modelLock) {
@@ -178,11 +206,10 @@ object VoskEngine {
                 preparing = false
             }
             if (ok) {
-                if (mode != MODE_EN) ensureChineseModel()
-                if (pendingStart) {
-                    pendingStart = false
-                    startListening(pendingStartBargeIn)
-                }
+                // 启动时就顺手把中文模型也载入，别等用户开口时才在后台慢慢解包：
+                // 否则 auto 模式第一句话只有英文识别器，中文会被小英文模型听成 “the quick luna”。
+                ensureChineseModel()
+                startPendingIfQueued()
             }
         }, "vosk-prepare").start()
     }
@@ -192,24 +219,53 @@ object VoskEngine {
         if (zhTried || zhLoading) return
         if (!hasChineseModel(app)) {
             zhTried = true
+            zhFailed = true
             emitState("zh-unavailable", "没有打包中文语音包")
+            startPendingIfQueued()
             return
         }
         zhLoading = true
         zhTried = true
         Thread({
+            var ok = false
             try {
                 LibVosk.setLogLevel(LogLevel.WARNINGS)
                 val dir = unpackModel(app, ASSET_ZH)
                 val m = Model(dir.absolutePath)
                 synchronized(modelLock) { modelZh = m }
+                zhFailed = false
+                ok = true
                 emitState("ready-zh", "离线中文语音已就绪")
             } catch (t: Throwable) {
+                zhFailed = true
                 emitState("zh-unavailable", "中文语音包载入失败：" + (t.message ?: ""))
             } finally {
                 zhLoading = false
             }
+            // 中文模型刚好是在“已经开着英文识别器听”的时候载好的：
+            // 如果用户还没开口，安静重启这一轮，把中文识别器无缝接上。
+            if (ok) {
+                val s = session
+                if (running && mode != MODE_EN && s != null && s.zh == null && !voiceSeen) {
+                    val barge = bargeInMode
+                    quietStop = true
+                    stopListeningInternal(true)
+                    quietStop = false
+                    startListening(barge)
+                }
+            }
+            startPendingIfQueued()
         }, "vosk-prepare-zh").start()
+    }
+
+    /** 模型就绪后，把等待中的那一轮接上（由后台线程调用，只让一个调用者真正开工）。 */
+    private fun startPendingIfQueued() {
+        val go = synchronized(this) {
+            val p = pendingStart
+            if (p) pendingStart = false
+            p
+        }
+        if (go) startListening(pendingStartBargeIn)
     }
 
     private fun unpackModel(ctx: Context, assetDir: String): File {
@@ -276,6 +332,37 @@ object VoskEngine {
             appCtx?.let { prepare(it) }
             return true
         }
+        // 中文模型还没好时，不要默默只开英文识别器（那正是中文被听成英文的原因）。
+        if (mode != MODE_EN && modelZh == null && !zhFailed) {
+            if (!zhTried) ensureChineseModel()
+            if (zhLoading) {
+                pendingStart = true
+                pendingStartBargeIn = bargeIn
+                emitState("loading", "正在准备中文语音…")
+                if (mode == MODE_AUTO) {
+                    // 等一小会儿；中文包实在太慢就先让英文模型顶上，至少不会没反应
+                    Thread({
+                        val deadline = SystemClock.elapsedRealtime() + ZH_WAIT_MS
+                        while (zhLoading && modelZh == null &&
+                            SystemClock.elapsedRealtime() < deadline
+                        ) {
+                            try {
+                                Thread.sleep(50)
+                            } catch (e: InterruptedException) {
+                                return@Thread
+                            }
+                        }
+                        if (modelZh == null) startPendingIfQueued()
+                    }, "vosk-zh-wait").start()
+                }
+                return true
+            }
+        }
+        // “中文优先”下中文模型不可用：明确报错，绝不悄悄退回英文识别
+        if (mode == MODE_ZH && modelZh == null) {
+            emitState("error", "中文语音模型不可用，先打字或把识别方式切到中英自动")
+            return false
+        }
         val wantAec = bargeIn || VoiceCompanionService.isActive
         if (running) {
             if (loopAecSource == wantAec) return true
@@ -312,7 +399,7 @@ object VoskEngine {
         }
         if (s.en == null && s.zh == null) {
             s.close()
-            if (mode == MODE_ZH || (mode == MODE_AUTO && zhLoading)) {
+            if (zhLoading) {
                 // 中文模型还在载入，等它好了再自动开始
                 pendingStart = true
                 pendingStartBargeIn = bargeIn
@@ -375,6 +462,8 @@ object VoskEngine {
             prepared = false
             zhTried = false
             zhLoading = false
+            zhFailed = false
+            pendingStart = false
         }
     }
 
@@ -594,18 +683,43 @@ object VoskEngine {
         val enOk = en.text.isNotEmpty() && en.text.any { it.isLetter() }
         val zhOk = zh.text.isNotEmpty() && zh.text.any { isCjk(it) }
         if (!enOk && !zhOk) return Cand("", 1f, "en")
+        // 中文优先：只要中文模型听见了字，就用中文结果（英文模型在 zh 模式下本来就不该开）
+        if (mode == MODE_ZH) return if (zhOk) zh else Cand("", 1f, "zh")
         if (!zhOk) return en
         if (!enOk) return zh
+        // 英文模式：有英文结果就用英文（中文识别器本来就不该开，这里再兜一层）
+        if (mode == MODE_EN) return en
         val enWords = normalizeWords(en.text).size
         val zhChars = zh.text.count { isCjk(it) }
+
+        // 明显的中文短句：英文小模型常凭空编出 the / a / oh / luna 这种词
         if (zhChars >= 2 && enWords <= 1) return zh
+        // 明显是完整、流利的英文（4 个词以上且置信度够）：让英文干净地赢，不要被中文偏置压住
+        if (enWords >= 4 && zhChars <= 2 && en.conf >= 0.60f) return en
         if (enWords >= 2 && zhChars <= 1) return en
         if (zhChars >= 3 && enWords <= 2) return zh
-        if (mode == MODE_ZH) return zh
-        if (mode == MODE_EN) return en
-        val enScore = en.conf * (0.55f + 0.09f * minOf(enWords, 5))
-        val zhScore = zh.conf * (0.55f + 0.09f * minOf(zhChars, 5))
-        return if (zhScore > enScore) zh else en
+
+        // auto 模式：两个都像话。先处理最典型的“中文被英文抢走”：
+        // vosk-model-small-en-us 对幻觉短词给的 conf 虚高（0.85+），
+        // 所以中文有 3 个字以上、置信度不离谱时，优先中文。
+        if (zhChars >= 2 && zh.conf >= 0.55f && enWords <= 3 &&
+            zhChars >= 3 && zh.conf >= en.conf - 0.15f
+        ) {
+            Log.d(TAG, "choose -> zh (short-zh rule) en='${en.text}' conf=$en.conf words=$enWords zh='${zh.text}' conf=${zh.conf} chars=$zhChars")
+            return zh
+        }
+
+        // 中英双语打分：给中文一个自然偏置（汉字信息密度高），
+        // 英文按词数加分，词越多、conf 越高越可信。
+        val enScore = en.conf * (0.50f + 0.08f * minOf(enWords, 5))
+        val zhScore = zh.conf * (0.62f + 0.09f * minOf(zhChars, 5))
+        val pick = if (zhScore > enScore) zh else en
+        Log.d(
+            TAG,
+            "choose -> ${pick.lang} en='${en.text}' conf=$en.conf words=$enWords score=$enScore | " +
+                "zh='${zh.text}' conf=${zh.conf} chars=$zhChars score=$zhScore | mode=$mode"
+        )
+        return pick
     }
 
     private fun appendEn(text: String, conf: Float) {
@@ -703,8 +817,13 @@ object VoskEngine {
 
     private fun avg(sum: Double, n: Int): Float = if (n > 0) (sum / n).toFloat() else 0.85f
 
+    /** 中文结果清理：Vosk 会在汉字之间插空格，这里只去掉多余的空白，汉字、数字、标点照原样保留。 */
     private fun cleanZh(s: String): String = s
         .replace(Regex("(?<=[\\u3400-\\u9fff])\\s+(?=[\\u3400-\\u9fff])"), "")
+        .replace(Regex("(?<=[\\u3400-\\u9fff])\\s+(?=[0-9０-９])"), "")
+        .replace(Regex("(?<=[0-9０-９])\\s+(?=[\\u3400-\\u9fff])"), "")
+        .replace(Regex("(?<=[0-9０-９])\\s+(?=[0-9０-９])"), "")
+        .replace(Regex("\\s+(?=[，。！？、；：,.!?;:])"), "")
         .replace(Regex("\\s{2,}"), " ")
         .trim()
 

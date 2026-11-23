@@ -568,7 +568,7 @@
           this.button(true);
           if (currentView === "chat") {
             Stage.listen();
-            $("chatHintLine").textContent = "听着呢——直接说英文，也可以说中文提问";
+            $("chatHintLine").textContent = "听着呢——" + Ear.modeTip();
           }
         } catch (e) {
           this.markFailed();
@@ -704,6 +704,21 @@
     interrupted: false,
     onceCb: null,
 
+    LANG_NAMES: { auto: "中英自动", zh: "中文优先", en: "英文优先" },
+    LANG_LABEL: { auto: "🌐 中英自动", zh: "🇨🇳 中文", en: "🇺🇸 英文" },
+    LANG_TIP: { auto: "中英文都能说", zh: "直接说中文提问", en: "直接说英文就行" },
+
+    modeName: function () { return this.LANG_NAMES[this.langMode] || "中英自动"; },
+    modeTip: function () { return this.LANG_TIP[this.langMode] || "中英文都能说"; },
+
+    /** 对话页底部那行提示：把当前语音识别方式写清楚 */
+    readyHint: function () {
+      if (currentView !== "chat") return;
+      const line = $("chatHintLine");
+      if (!line) return;
+      line.textContent = "离线语音已就绪（" + this.modeName() + "）· " + this.modeTip();
+    },
+
     supported: function () {
       if (!Bridge || !Bridge.startVoiceService) return false;
       try { return !!(Bridge.hasVosk && Bridge.hasVosk()); } catch (e) { return false; }
@@ -715,12 +730,22 @@
     },
 
     setLang: function (mode) {
-      this.langMode = mode;
-      LS.set("erc.earLang", mode);
-      if (Bridge && Bridge.setVoskLanguage) { try { Bridge.setVoskLanguage(mode); } catch (e) {} }
+      this.langMode = (mode === "zh" || mode === "en") ? mode : "auto";
+      LS.set("erc.earLang", this.langMode);
+      // 立刻告诉原生层：选“中文”之后 100% 走中文识别器
+      if (Bridge && Bridge.setVoskLanguage) { try { Bridge.setVoskLanguage(this.langMode); } catch (e) {} }
       this.render();
-      const names = { auto: "中英自动", en: "只认英文", zh: "中文优先" };
-      toast("语音识别：" + names[mode]);
+      if (currentView === "chat") {
+        $("chatHintLine").textContent = "已切到" + this.modeName() + " · " + this.modeTip();
+      }
+      toast("语音识别：" + this.modeName());
+    },
+
+    /** 底部工具栏那个一键按钮：中英自动 → 中文 → 英文 → 中英自动 */
+    cycleLang: function () {
+      const order = ["auto", "zh", "en"];
+      const i = order.indexOf(this.langMode);
+      this.setLang(order[(i + 1) % order.length]);
     },
 
     render: function () {
@@ -751,6 +776,12 @@
       if (chat) {
         chat.classList.toggle("on", this.on);
         chat.textContent = this.on ? "🎧 连麦中" : "🎧 耳机连麦";
+      }
+      const langBtn = $("btnLangChat");
+      if (langBtn) {
+        langBtn.textContent = this.LANG_LABEL[this.langMode] || this.LANG_LABEL.auto;
+        langBtn.classList.toggle("on", this.langMode !== "auto");
+        langBtn.setAttribute("aria-label", "语音识别：" + this.modeName() + "，点一下切换");
       }
       document.body.classList.toggle("ear-on", this.on);
     },
@@ -834,9 +865,10 @@
     onVosk: function (state, msg) {
       if (state === "ready") {
         this.voskReady = true;
-        if (currentView === "chat") $("chatHintLine").textContent = "离线语音已就绪，直接说就行";
+        this.readyHint();
       } else if (state === "ready-zh") {
         this.zhReady = true;
+        if (currentView === "chat" && this.langMode !== "en") this.readyHint();
       } else if (state === "zh-unavailable") {
         this.zhReady = false;
       } else if (state === "loading") {
@@ -1583,7 +1615,7 @@
         '<div class="ch-sub">' + esc(sc.titleEn) + " · " + esc(sc.level) + "</div></div>" +
         '<button class="icon-btn" data-act="chat-zh" aria-label="中文对照">中</button>';
       $("chatStream").innerHTML = "";
-      $("chatHintLine").textContent = "目标：" + (sc.goal || "");
+      $("chatHintLine").textContent = "目标：" + (sc.goal || "") + " · 语音：" + Ear.modeName();
       this.partnerLine(sc.turns[0], true);
     },
 
@@ -1615,7 +1647,7 @@
         '<button class="icon-btn" data-act="chat-zh" aria-label="中文对照">中</button>';
       $("chatStream").innerHTML = "";
       $("chatHintLine").textContent = AI.configured()
-        ? "可以直接说：Hi! 也可以说中文，例如「这句话什么意思」「怎么用英语说」"
+        ? "可以直接说：Hi! 也可以说中文，例如「这句话什么意思」「怎么用英语说」 · 语音：" + Ear.modeName()
         : "还没有配置接口。到“设置 → AI 自由外教”填入自己的免费接口即可；不配置也能用全部离线功能。";
 
       if (!AI.configured()) {
@@ -2645,6 +2677,7 @@
     $("btnHint").addEventListener("click", function () { Chat.hint(); });
     $("btnRestart").addEventListener("click", function () { Chat.restart(); });
     $("btnZhChat").addEventListener("click", function () { Chat.toggleZh(); });
+    if ($("btnLangChat")) $("btnLangChat").addEventListener("click", function () { Ear.cycleLang(); });
 
     // 耳机后台连麦
     if ($("btnEar")) $("btnEar").addEventListener("click", function () { Ear.toggle(); });
@@ -2727,11 +2760,13 @@
     Stage.mount();
     Ear.load();
     Ear.render();
+    // 让原生层的识别语言和上次保存的一致（默认中英自动）
+    if (Bridge && Bridge.setVoskLanguage) { try { Bridge.setVoskLanguage(Ear.langMode); } catch (e) {} }
     $("btnShowMastered").classList.toggle("on", State.showMastered);
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.1.0";
+      $("aboutVersion").textContent = "版本 1.1.1";
     }
     renderLibrary();
     renderScenarios();

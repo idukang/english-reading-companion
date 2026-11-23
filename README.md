@@ -4,7 +4,7 @@
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.1.0.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.1.1.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -79,7 +79,7 @@
 - 一键开启前台服务，**熄屏、切到别的应用都能继续说**；通知栏常驻一条“耳机语音对话中”，点「结束对话」随时停
 - **随时打断**：AI 说话时你也开麦听着（`VOICE_COMMUNICATION` + 系统回声消除），你一张口就把它的声音停掉，它顺着你新说的内容接话，不会重复被打断的那半句
 - **中英都懂**：说英文练口语；用中文问「什么意思」「怎么用英语说」「再说一遍」「慢一点」也听得懂，会用中文解释 + 英文示范，然后把你带回英语对话
-- 语音识别模式可切：中英自动 / 只认英文 / 中文提问；中文模型按需载入，进对话页才开始加载
+- 语音识别模式一键可切：对话页底部工具栏的「🌐 中英自动」按钮循环切换 中英自动 / 🇨🇳 中文 / 🇺🇸 英文，输入框下的提示行同时写明当前模式；中英两套模型在启动时一起载入，切到中文就 100% 走中文识别器
 
 **9 个离线情景对话**，每个 4 轮真实对话：
 
@@ -127,7 +127,7 @@
 
 ## 三、安装方法
 
-1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.1.0.apk`
+1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.1.1.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
 
@@ -150,7 +150,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.1.0`。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.1.1`。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译

@@ -520,6 +520,8 @@ body[data-theme="dark"] .kp { color: #f3e6bf; }
   border-top: 1px solid var(--line);
 }
 .chat-tools { display: flex; gap: 6px; margin-bottom: 7px; flex-wrap: wrap; }
+/* 语音识别方式：始终留在对话工具栏里，随时能看见、一点就换 */
+.chat-tools #btnLangChat { font-size: 12.5px; padding: 6px 9px; }
 .chat-input { display: flex; gap: 6px; align-items: flex-end; }
 .chat-input textarea {
   flex: 1;
