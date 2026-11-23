@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>英语陪读</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="light" data-font="m">
+
+<div class="app">
+
+  <header class="topbar">
+    <button class="icon-btn hidden" id="btnBack" aria-label="返回">‹</button>
+    <div class="titles">
+      <h1 id="pageTitle">英语陪读</h1>
+      <p id="pageSub">全龄段 · 零花费 · 断网可用</p>
+    </div>
+    <div class="top-actions">
+      <button class="chip" id="btnZh" aria-label="中文对照">中</button>
+      <button class="chip" id="btnFont" aria-label="字号">A</button>
+      <button class="chip" id="btnTheme" aria-label="主题">☀</button>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ================= 书库 ================= -->
+    <section class="view active" id="view-library">
+      <div class="hero">
+        <div class="hero-title">每天十分钟，读一点英文</div>
+        <div class="hero-sub">点句子就读，点单词就查；读完有两道小问，读不懂可以问外教。</div>
+        <div class="hero-chips">
+          <span class="stat" id="statRead">已读 0 篇</span>
+          <span class="stat" id="statWords">生词 0 个</span>
+          <span class="stat" id="statOffline">完全离线</span>
+        </div>
+      </div>
+
+      <div class="seg" id="tierSeg">
+        <button class="seg-item active" data-tier="kids">🧸 少儿启蒙</button>
+        <button class="seg-item" data-tier="teen">🎒 校园进阶</button>
+        <button class="seg-item" data-tier="adult">📰 成人实用</button>
+      </div>
+
+      <div class="list" id="passageList"></div>
+
+      <div class="block-pad">
+        <button class="btn ghost block" id="btnCustomOpen">✍️ 导入我自己的文章</button>
+        <p class="tiny center">把任意英文文章粘进来，自动切句，逐句点读。</p>
+      </div>
+    </section>
+
+    <!-- ================= 阅读器 ================= -->
+    <section class="view" id="view-reader">
+      <div class="reader-head">
+        <h2 id="readerTitle"></h2>
+        <p id="readerZh"></p>
+        <div class="meta" id="readerMeta"></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="row">
+          <button class="btn primary grow" id="btnPlayAll">▶ 朗读全篇</button>
+          <button class="btn" id="btnStop">■ 停止</button>
+        </div>
+        <div class="row wrap">
+          <button class="chip" id="btnSpeed">语速 1.0x</button>
+          <button class="chip" id="btnAccent">美音</button>
+          <button class="chip" id="btnLoop">单句循环</button>
+          <button class="chip" id="btnNotes">讲解</button>
+        </div>
+      </div>
+
+      <div class="sentences" id="sentences"></div>
+
+      <div class="qa-block">
+        <h3>🧠 读后两问</h3>
+        <p class="tiny">用英文答，或者用中文说说你的理解都行；也可以点 🎙️ 说出来。</p>
+        <div id="qaList"></div>
+      </div>
+
+      <div class="shadow-hint tiny center">下方工具栏可以对当前选中的句子跟读录音、回放对比。</div>
+    </section>
+
+    <!-- ================= 对话列表 ================= -->
+    <section class="view" id="view-conv">
+      <div class="hero">
+        <div class="hero-title">开口说，才算学会</div>
+        <div class="hero-sub">每个情景都是真实的说话现场：对方先说一句，你回一句，说完还有中文点评。</div>
+      </div>
+
+      <div class="ai-card" id="aiCard"></div>
+
+      <div class="seg" id="convSeg">
+        <button class="seg-item active" data-tier="kids">🧸 少儿</button>
+        <button class="seg-item" data-tier="teen">🎒 校园</button>
+        <button class="seg-item" data-tier="adult">📰 成人</button>
+      </div>
+
+      <div class="list" id="scenarioList"></div>
+    </section>
+
+    <!-- ================= 聊天 ================= -->
+    <section class="view" id="view-chat">
+      <div class="chat-head" id="chatHead"></div>
+      <div class="chat-stream" id="chatStream"></div>
+      <div class="chat-dock">
+        <div class="chat-tools" id="chatTools">
+          <button class="chip" id="btnHint">💡 提示</button>
+          <button class="chip" id="btnRestart">🔄 重来</button>
+          <button class="chip" id="btnZhChat">中文对照</button>
+        </div>
+        <div class="chat-input">
+          <button class="icon-btn mic" id="btnMic" aria-label="语音回答">🎙️</button>
+          <textarea id="chatText" rows="1" placeholder="用英文回一句，或点🎙️ 说出来"></textarea>
+          <button class="btn primary" id="btnSend">发送</button>
+        </div>
+        <div class="tiny center" id="chatHintLine"></div>
+      </div>
+    </section>
+
+    <!-- ================= 生词本 ================= -->
+    <section class="view" id="view-vocab">
+      <div class="vocab-head">
+        <div class="vocab-title"><b id="vocabCount">0</b> 个生词<span class="tiny" id="vocabMastered"></span></div>
+        <div class="row wrap">
+          <button class="chip" id="btnReview">🃏 卡片复习</button>
+          <button class="chip" id="btnShowMastered">显示已掌握</button>
+        </div>
+      </div>
+      <div id="vocabList"></div>
+      <div id="flashWrap" class="hidden">
+        <div class="flash-card" id="flashCard">
+          <div class="flash-front" id="flashFront">
+            <div class="flash-word" id="flashWord">word</div>
+            <div class="flash-ipa" id="flashIpa"></div>
+            <div class="tiny">轻点卡片翻面</div>
+          </div>
+          <div class="flash-back hidden" id="flashBack">
+            <div class="flash-pos" id="flashPos"></div>
+            <div class="flash-zh" id="flashZh"></div>
+            <div class="flash-ex" id="flashEx"></div>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn" id="flashPrev">上一个</button>
+          <button class="btn primary grow" id="flashSpeak">🔊 读一遍</button>
+          <button class="btn" id="flashNext">下一个</button>
+        </div>
+        <div class="row">
+          <button class="btn ghost grow" id="flashMaster">✔️ 标记已掌握</button>
+          <button class="btn ghost" id="flashClose">退出复习</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 设置 ================= -->
+    <section class="view" id="view-settings">
+      <div class="card">
+        <h3>学习设置</h3>
+
+        <div class="field">
+          <div class="field-label">字号</div>
+          <div class="seg small" id="setFontSeg">
+            <button data-font="s">标准</button>
+            <button data-font="m" class="active">大字</button>
+            <button data-font="l">启蒙巨字</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">界面主题</div>
+          <div class="seg small" id="setThemeSeg">
+            <button data-theme="light">日间</button>
+            <button data-theme="sepia">护眼</button>
+            <button data-theme="dark">夜间</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">朗读语速</div>
+          <div class="seg small" id="setSpeedSeg">
+            <button data-speed="0.6">0.6x</button>
+            <button data-speed="0.75">0.75x</button>
+            <button data-speed="0.9">0.9x</button>
+            <button data-speed="1" class="active">1.0x</button>
+            <button data-speed="1.2">1.2x</button>
+            <button data-speed="1.4">1.4x</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">口音</div>
+          <div class="seg small" id="setAccentSeg">
+            <button data-accent="en-US" class="active">美音</button>
+            <button data-accent="en-GB">英音</button>
+          </div>
+        </div>
+
+        <div class="field switch-row">
+          <div>
+            <div class="field-label">显示中文对照</div>
+            <div class="tiny">每句下面的中文翻译</div>
+          </div>
+          <button class="switch" id="setBilingual" role="switch"></button>
+        </div>
+
+        <div class="field switch-row">
+          <div>
+            <div class="field-label">跟读时自动播放原文</div>
+            <div class="tiny">按下跟读前先听一遍标准音</div>
+          </div>
+          <button class="switch" id="setAutoPlay" role="switch"></button>
+        </div>
+      </div>
+
+      <div class="card" id="aiSettings">
+        <h3>🤖 AI 自由外教（可选）</h3>
+        <p class="hint">不填也能用：内置情景对话和读后问答完全离线、免费。填写你自己的接口后，可以和 AI 自由用英文聊天、问阅读里的问题。</p>
+
+        <div class="field">
+          <div class="field-label">服务商</div>
+          <select id="aiProvider" class="select">
+            <option value="zhipu">智谱 GLM（glm-4-flash 免费额度）</option>
+            <option value="deepseek">DeepSeek（deepseek-chat）</option>
+            <option value="dashscope">通义千问（DashScope 兼容模式 · qwen-turbo）</option>
+            <option value="siliconflow">硅基流动 SiliconFlow（含免费小模型）</option>
+            <option value="custom">自定义 OpenAI 兼容接口</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">接口地址</div>
+          <input class="input" id="aiEndpoint" type="url" placeholder="https://…/chat/completions" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <div class="field-label">模型名</div>
+          <input class="input" id="aiModel" type="text" placeholder="例如 glm-4-flash" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <div class="field-label">API Key</div>
+          <input class="input" id="aiKey" type="password" placeholder="sk-…（只保存在本机）" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="row wrap">
+          <button class="btn primary" id="btnAiSave">保存</button>
+          <button class="btn" id="btnAiTest">测试连接</button>
+          <button class="btn ghost" id="btnAiClear">清除配置</button>
+        </div>
+        <p class="tiny" id="aiStatus"></p>
+      </div>
+
+      <div class="card">
+        <h3>关于与隐私</h3>
+        <p>· 不含广告、不含统计埋点、不读取通讯录和短信，只申请麦克风权限（跟读与语音回答时使用）。</p>
+        <p>· 书库、离线词库、情景对话全部打包在安装包里，飞行模式也能正常使用。</p>
+        <p>· 只有两种情况会联网：你主动点“联网查词”，或你自己配置了 AI 接口并主动发消息。你填的接口地址和密钥只保存在本机，只发送到你填写的那个地址。</p>
+        <p>· 生词本、已读进度、学习设置都保存在本机，卸载即清除。</p>
+        <p class="tiny" id="aboutVersion"></p>
+      </div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar" id="tabbar">
+    <button class="tab active" data-tab="library"><span class="tab-ico">📚</span>书库</button>
+    <button class="tab" data-tab="conv"><span class="tab-ico">💬</span>对话</button>
+    <button class="tab" data-tab="vocab"><span class="tab-ico">📒</span>生词本</button>
+    <button class="tab" data-tab="settings"><span class="tab-ico">⚙️</span>设置</button>
+  </nav>
+
+  <!-- 句子跟读工具栏 -->
+  <div class="shadow-bar hidden" id="shadowBar">
+    <button class="btn small primary" id="btnRec">🎤 跟读这句</button>
+    <button class="btn small" id="btnPlayMine" disabled>▶ 我的录音</button>
+    <button class="btn small" id="btnCompare" disabled>🔁 对比</button>
+    <button class="btn small ghost" id="btnDelRec" disabled>🗑</button>
+  </div>
+
+</div>
+
+<!-- 单词详情 -->
+<div class="sheet-mask hidden" id="wordMask">
+  <div class="sheet" id="wordSheet">
+    <div class="sheet-grip"></div>
+    <div class="word-head">
+      <div>
+        <div class="word-big" id="wWord">word</div>
+        <div class="word-ipa" id="wIpa"></div>
+      </div>
+      <button class="icon-btn" id="wClose" aria-label="关闭">×</button>
+    </div>
+    <div class="word-body">
+      <div class="word-pos" id="wPos"></div>
+      <div class="word-zh" id="wZh"></div>
+      <div class="word-ex" id="wEx"></div>
+      <div class="tiny" id="wSource"></div>
+    </div>
+    <div class="row wrap">
+      <button class="btn primary" id="wSpeak">🔊 发音</button>
+      <button class="btn" id="wAdd">＋ 加入生词本</button>
+      <button class="btn ghost hidden" id="wOnline">🌐 联网查词</button>
+    </div>
+    <div class="tiny center" id="wOnlineNote"></div>
+  </div>
+</div>
+
+<!-- 导入文章 -->
+<div class="sheet-mask hidden" id="customMask">
+  <div class="sheet tall" id="customSheet">
+    <div class="sheet-grip"></div>
+    <div class="word-head">
+      <h3>导入文章</h3>
+      <button class="icon-btn" id="cClose" aria-label="关闭">×</button>
+    </div>
+    <div class="field">
+      <div class="field-label">标题（可留空）</div>
+      <input class="input" id="cTitle" placeholder="例如：My Weekend">
+    </div>
+    <div class="field">
+      <div class="field-label">英文正文</div>
+      <textarea class="textarea" id="cText" rows="7" placeholder="把英文文章粘贴到这里，会自动按句切分。"></textarea>
+    </div>
+    <div class="field">
+      <div class="field-label">中文翻译（可选）</div>
+      <textarea class="textarea" id="cZh" rows="4" placeholder="一行一句对照最好；整体粘贴也可以。"></textarea>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="cCancel">取消</button>
+      <button class="btn primary grow" id="cSave">开始读</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="library.js"></script>
+<script src="dict.js"></script>
+<script src="scenarios.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
