@@ -46,6 +46,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
     companion object {
         private const val REQ_AUDIO = 1001
         private const val REQ_VOICE_INTENT = 1002
+        private const val REQ_NOTIF = 1003
 
         @Volatile
         var instance: MainActivity? = null
@@ -791,6 +792,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_NOTIF) {
+            // 通知权限给不给都继续：只是看不到那条常驻通知而已
+            val lang = pendingServiceLang
+            pendingServiceLang = null
+            if (lang != null) startVoiceServiceNow(lang)
+            return
+        }
         if (requestCode != REQ_AUDIO) return
         var micGranted = false
         for (i in permissions.indices) {
@@ -976,6 +984,19 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, VoskEngine.Listene
                     pendingServiceLang = langMode
                     emit("window.Native && window.Native.onVoiceService && window.Native.onVoiceService('permission','正在请求麦克风权限…')")
                     requestAudioPermissions()
+                    return@post
+                }
+                // 麦克风早就给过了：单独请求通知权限，好让她能看到“结束对话”的通知
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingServiceLang = langMode
+                    try {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
+                    } catch (e: Exception) {
+                        pendingServiceLang = null
+                        startVoiceServiceNow(langMode)
+                    }
                     return@post
                 }
                 startVoiceServiceNow(langMode)
