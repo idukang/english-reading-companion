@@ -13,4 +13,6 @@ jobs:
       - name: Run CI build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: bash scripts/ci-build.sh
