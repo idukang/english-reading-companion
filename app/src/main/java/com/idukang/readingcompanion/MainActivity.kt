@@ -44,6 +44,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     companion object {
         private const val REQ_AUDIO = 1001
+        private const val REQ_VOICE_INTENT = 1002
     }
 
     private lateinit var webView: WebView
@@ -65,6 +66,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     // ---------- 语音识别 ----------
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
+    // 停 TTS 后延迟开麦的任务（重复点击时先取消，避免两个识别实例抢麦克风）
+    private var pendingListenStart: Runnable? = null
+    // 本次尝试是否已经退到系统语音输入面板（每次 doStartListening 重置）
+    private var voiceDialogTried = false
+    private var voiceDialogPending = false
+    // 主动 cancel() 也会回调 onError(ERROR_CLIENT)，这段时间内的错误直接忽略
+    private var stopping = false
 
     private var pendingRecordAfterPermission = false
     private var pendingSpeechAfterPermission = false
@@ -299,12 +307,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         false
     }
 
-    private val recognitionListener = object : RecognitionListener {
+    /**
+     * 每个 SpeechRecognizer 实例配一个专属监听器，回调里先确认实例还是当前那个，
+     * 这样被销毁的旧实例（上一次 ERROR_CLIENT 的残留）不会影响新的这次。
+     */
+    private fun createRecognitionListener(r: SpeechRecognizer): RecognitionListener = object : RecognitionListener {
+        private fun stale(): Boolean = recognizer !== r
+
         override fun onReadyForSpeech(params: Bundle?) {
+            if (stale()) return
             emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('ready','')")
         }
 
         override fun onBeginningOfSpeech() {
+            if (stale()) return
             emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('speaking','')")
         }
 
@@ -313,14 +329,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         override fun onBufferReceived(buffer: ByteArray?) {}
 
         override fun onEndOfSpeech() {
+            if (stale()) return
             emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('processing','')")
         }
 
         override fun onError(error: Int) {
+            if (stale()) return
+            // 用户主动停止（或切到系统语音面板）时，cancel() 也会回调 ERROR_CLIENT，静默处理
+            if (stopping) return
             listening = false
+            // 内嵌识别在这台手机上不可靠：自动退到系统语音输入面板（每次开麦只试一次）
+            if (shouldFallbackToVoiceDialog(error) && launchVoiceIntent()) return
             val message = when (error) {
                 SpeechRecognizer.ERROR_AUDIO -> "麦克风录音出错"
-                SpeechRecognizer.ERROR_CLIENT -> "识别服务被中断"
+                SpeechRecognizer.ERROR_CLIENT -> "内置语音识别没能启动"
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "没有麦克风权限"
                 SpeechRecognizer.ERROR_NETWORK -> "网络不佳，识别未完成"
                 SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络超时，识别未完成"
@@ -334,12 +356,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         override fun onResults(results: Bundle?) {
+            if (stale()) return
             listening = false
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
             emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},true)")
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
+            if (stale()) return
             val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
             if (text.isNotEmpty()) {
                 emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},false)")
@@ -349,11 +373,95 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
+    /** 内嵌识别失败时，这些错误码说明服务本身不可靠，值得换系统语音面板再试一次。 */
+    private fun shouldFallbackToVoiceDialog(error: Int): Boolean {
+        if (voiceDialogTried || voiceDialogPending) return false
+        return error == SpeechRecognizer.ERROR_CLIENT ||
+            error == SpeechRecognizer.ERROR_SERVER ||
+            error == SpeechRecognizer.ERROR_NETWORK ||
+            error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+    }
+
+    private fun buildSpeechIntent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
+        putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak in English")
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+    }
+
+    private fun canUseVoiceIntent(): Boolean = try {
+        buildSpeechIntent().resolveActivity(packageManager) != null
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * 系统语音输入面板（RecognizerIntent）。国内很多 ROM 没有内嵌识别服务，
+     * 但系统/输入法自带的语音面板是能用的，这条路径是最后一道保险。
+     * 必须在主线程调用。
+     */
+    private fun launchVoiceIntent(): Boolean {
+        if (voiceDialogPending) return true
+        if (!canUseVoiceIntent()) return false
+        return try {
+            // 先让内嵌识别让出麦克风，避免两个识别服务同时抢
+            try {
+                recognizer?.cancel()
+            } catch (e: Exception) {
+            }
+            try {
+                tts?.stop()
+            } catch (e: Exception) {
+            }
+            listening = false
+            voiceDialogTried = true
+            voiceDialogPending = true
+            markStopping()
+            emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('dialog','请在弹出的系统语音窗口里说英文')")
+            startActivityForResult(buildSpeechIntent(), REQ_VOICE_INTENT)
+            true
+        } catch (e: Exception) {
+            voiceDialogPending = false
+            false
+        }
+    }
+
+    private fun destroyRecognizer() {
+        val r = recognizer
+        recognizer = null
+        listening = false
+        if (r != null) {
+            try {
+                r.cancel()
+            } catch (e: Exception) {
+            }
+            try {
+                r.destroy()
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    /** 主动让出麦克风后的一小段时间内，忽略系统回调的错误。 */
+    private fun markStopping() {
+        stopping = true
+        main.postDelayed({ stopping = false }, 900)
+    }
+
     private fun doStartListening() {
         main.post {
+            // 已经在听：再点一次就当作“停止”，避免重复 startListening 触发 ERROR_CLIENT
+            if (listening || voiceDialogPending) {
+                doStopListening()
+                return@post
+            }
             if (!speechAvailable()) {
+                // 没有内嵌识别服务：先试系统语音面板
+                if (launchVoiceIntent()) return@post
                 listening = false
-                emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable','本机没有可用的语音识别服务，请用键盘输入')")
+                emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable','这台手机没有可用的语音识别，请用键盘输入或录音跟读')")
                 return@post
             }
             val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -363,29 +471,56 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
                 return@post
             }
-            try {
-                if (recognizer == null) {
-                    recognizer = SpeechRecognizer.createSpeechRecognizer(this).also {
-                        it.setRecognitionListener(recognitionListener)
-                    }
-                }
-                try {
-                    tts?.stop()
-                } catch (e: Exception) {
-                }
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                    putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-                }
-                recognizer?.startListening(intent)
-                listening = true
-                emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('listening','')")
-            } catch (e: Exception) {
-                listening = false
+            prepareThenOpenMic()
+        }
+    }
+
+    /**
+     * 开麦前的准备：销毁旧实例 → 停掉 TTS → 等音频焦点释放 → 再创建新实例开麦。
+     * 旧实例不销毁、TTS 还占着音频，是国产 ROM 上 ERROR_CLIENT 的主要来源。
+     */
+    private fun prepareThenOpenMic() {
+        voiceDialogTried = false
+        destroyRecognizer()
+        try {
+            tts?.stop()
+        } catch (e: Exception) {
+        }
+        pendingListenStart?.let { main.removeCallbacks(it) }
+        val task = Runnable {
+            pendingListenStart = null
+            openMic()
+        }
+        pendingListenStart = task
+        main.postDelayed(task, 160)
+    }
+
+    private fun openMic() {
+        if (!speechAvailable()) {
+            if (!launchVoiceIntent()) {
+                emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable','这台手机没有可用的语音识别，请用键盘输入或录音跟读')")
+            }
+            return
+        }
+        val r = try {
+            SpeechRecognizer.createSpeechRecognizer(this)
+        } catch (e: Exception) {
+            listening = false
+            if (!launchVoiceIntent()) {
+                emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable',${jsStr(e.message ?: "无法启动语音识别")})")
+            }
+            return
+        }
+        recognizer = r
+        r.setRecognitionListener(createRecognitionListener(r))
+        try {
+            r.startListening(buildSpeechIntent())
+            listening = true
+            emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('listening','')")
+        } catch (e: Exception) {
+            listening = false
+            destroyRecognizer()
+            if (!launchVoiceIntent()) {
                 emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable',${jsStr(e.message ?: "无法启动语音识别")})")
             }
         }
@@ -393,12 +528,34 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun doStopListening() {
         main.post {
+            pendingListenStart?.let { main.removeCallbacks(it) }
+            pendingListenStart = null
+            val r = recognizer
+            if (r != null) markStopping()
             try {
-                recognizer?.cancel()
+                r?.cancel()
             } catch (e: Exception) {
             }
             listening = false
+            voiceDialogPending = false
         }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_VOICE_INTENT) return
+        voiceDialogPending = false
+        listening = false
+        if (resultCode == RESULT_OK && data != null) {
+            val list = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val text = list?.firstOrNull()?.trim() ?: ""
+            if (text.isNotEmpty()) {
+                emit("window.Native && window.Native.onSpeechResult && window.Native.onSpeechResult(${jsStr(text)},true)")
+                return
+            }
+        }
+        // 用户取消或面板没给出结果：告诉网页层，让它展示打字/录音的备用方式
+        emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('cancelled','系统语音输入没有返回结果')")
     }
 
     // ---------------- 权限 ----------------
@@ -544,6 +701,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         @JavascriptInterface
         fun isSpeechAvailable(): Boolean = speechAvailable()
+
+        /** 系统里是否有可用的语音输入面板（与内嵌识别服务是两回事）。 */
+        @JavascriptInterface
+        fun canUseVoiceDialog(): Boolean = canUseVoiceIntent()
+
+        /** 主动打开系统语音输入面板；说完通过 onSpeechResult 回传。 */
+        @JavascriptInterface
+        fun startVoiceDialog() {
+            main.post {
+                if (!launchVoiceIntent()) {
+                    emit("window.Native && window.Native.onSpeechState && window.Native.onSpeechState('unavailable','这台手机没有可用的语音识别，请用键盘输入或录音跟读')")
+                }
+            }
+        }
 
         @JavascriptInterface
         fun startListening() = doStartListening()

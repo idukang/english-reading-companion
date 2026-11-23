@@ -552,6 +552,43 @@ body[data-theme="dark"] .kp { color: #f3e6bf; }
   50% { box-shadow: 0 0 0 8px rgba(194, 96, 58, 0); }
 }
 
+/* 语音识别不可用时的备用输入条 */
+.speech-fallback {
+  margin-bottom: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--warm);
+  background: var(--warm-soft);
+  border-radius: 14px;
+}
+.speech-fallback .sf-title {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+  margin-bottom: 7px;
+}
+.speech-fallback .sf-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.speech-fallback .chip { white-space: normal; text-align: left; }
+.speech-fallback .sf-rec.on {
+  background: var(--warm);
+  border-color: var(--warm);
+  color: #fff;
+}
+.speech-fallback .sf-go {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.speech-fallback .chip[disabled] { opacity: 0.45; }
+.speech-fallback .sf-chips { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+.speech-fallback .sf-chips:empty { display: none; }
+.speech-fallback .sf-note {
+  margin-top: 7px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
 .hints { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
 .hint-chip {
   align-self: flex-start;

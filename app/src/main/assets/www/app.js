@@ -229,6 +229,17 @@
     },
 
     onRecordState: function (state, info) {
+      // 备用条自己结束时停掉的录音，不再弹“录好了”之类的提示
+      if (Sf.silent && (state === "recorded" || state === "error" || state === "idle")) {
+        Sf.silent = false;
+        Sf.recording = false;
+        return;
+      }
+      // 对话页里的录音属于“语音识别不可用”的备用方式，交给 Sf 处理
+      if (Sf.active && currentView === "chat") {
+        Sf.onState(state, info);
+        return;
+      }
       Rec.onState(state, info);
     },
 
@@ -369,12 +380,131 @@
     }
   };
 
+  /* ============== 语音识别不可用时的备用输入条（对话页） ============== */
+
+  const Sf = {
+    active: false,
+    recording: false,
+    recorded: false,
+    silent: false,
+
+    show: function (msg) {
+      if (currentView !== "chat") return;
+      const box = $("speechFallback");
+      if (!box) return;
+      this.active = true;
+      box.classList.remove("hidden");
+      $("sfTitle").textContent = msg || "语音识别在这台手机上不稳定，换一种方式接着说：";
+      this.renderChips();
+      this.refresh();
+      $("chatHintLine").textContent = "点上面的任意一种方式继续，或者直接打字";
+    },
+
+    hide: function () {
+      if (this.recording && Bridge) {
+        this.silent = true;
+        try { Bridge.stopRecording(); } catch (e) {}
+      }
+      this.active = false;
+      this.recording = false;
+      const box = $("speechFallback");
+      if (box) box.classList.add("hidden");
+    },
+
+    renderChips: function () {
+      const wrap = $("sfChips");
+      if (!wrap) return;
+      let list = [];
+      if (Chat.mode === "ai" || !Chat.scenario) {
+        list = ["That sounds great!", "Can you say that again?", "Let me try again."];
+      } else {
+        const t = Chat.currentTurn();
+        if (t) {
+          list = (t.chips || []).slice(0, 3);
+          if (!list.length && t.model) list = [t.model];
+        }
+      }
+      wrap.innerHTML = list.map(function (c) {
+        return '<button class="hint-chip" data-act="use-chip" data-text="' + attr(c) + '">' + esc(c) + "</button>";
+      }).join("");
+    },
+
+    toggleRecord: function () {
+      if (!Bridge) { toast("这个版本不支持录音"); return; }
+      if (this.recording) {
+        try { Bridge.stopRecording(); } catch (e) {}
+        return;
+      }
+      this.recording = true;
+      this.recorded = false;
+      this.refresh();
+      try {
+        Bridge.startRecording();
+      } catch (e) {
+        this.recording = false;
+        this.refresh();
+        toast("无法开始录音");
+      }
+    },
+
+    play: function () {
+      if (!this.recorded) { toast("先录一句，再听自己的发音"); return; }
+      if (!Bridge) return;
+      try { Bridge.playRecording(); } catch (e) { toast("无法播放录音"); }
+    },
+
+    done: function () {
+      const typed = ($("chatText").value || "").trim();
+      if (typed) { Chat.send(typed); return; }
+      Chat.sayAloudAndContinue();
+    },
+
+    refresh: function () {
+      const rec = $("sfRecBtn");
+      const play = $("sfPlayBtn");
+      if (!rec || !play) return;
+      rec.textContent = this.recording ? "⏹ 停止录音" : (this.recorded ? "🔁 重录一句" : "🎙️ 录音口语对比");
+      rec.classList.toggle("on", this.recording);
+      play.disabled = !this.recorded;
+    },
+
+    onState: function (state, info) {
+      if (state === "permission") {
+        toast("正在请求麦克风权限…");
+      } else if (state === "recording") {
+        this.recording = true;
+        this.recorded = false;
+        this.refresh();
+      } else if (state === "recorded") {
+        this.recording = false;
+        this.recorded = true;
+        Rec.has = true;
+        Rec.state = "idle";
+        this.refresh();
+        toast("录好了：可以点“听我的录音”对比，或者点“我已说完，继续”");
+      } else if (state === "playing") {
+        toast("正在播放你的录音…");
+      } else if (state === "error") {
+        this.recording = false;
+        this.refresh();
+        toast("录音失败，检查一下麦克风权限，或者有没有被别的应用占用");
+      } else {
+        this.recording = false;
+        this.refresh();
+      }
+    }
+  };
+
   /* ========================= 语音识别 ========================= */
 
   const ASR = {
     cb: null,
     live: null,
     listening: false,
+    dialog: false,
+    // 本次会话里语音识别已经坏过：不再自动开麦，免得每轮都弹一次提示
+    failed: false,
+    failMsg: "",
 
     available: function () {
       if (!Bridge) return false;
@@ -385,9 +515,14 @@
 
     start: function (opts) {
       opts = opts || {};
-      if (!this.available()) {
-        toast("本机没有语音识别服务，直接用键盘输入吧（也可以用输入法的语音键）");
-        if (opts.input) { try { opts.input.focus(); } catch (e) {} }
+      this.dialog = false;
+      if (!Bridge) {
+        toast("当前环境不支持语音识别，用键盘输入吧");
+        return;
+      }
+      if (opts.auto && this.failed) {
+        Stage.settle();
+        Chat.showFallback(this.failMsg);
         return;
       }
       this.cb = opts.onText || null;
@@ -396,27 +531,54 @@
         Bridge.startListening();
         this.listening = true;
       } catch (e) {
-        toast("语音识别没能启动，请用键盘输入");
+        this.markFailed();
       }
     },
 
     stop: function () {
       if (Bridge && Bridge.stopListening) { try { Bridge.stopListening(); } catch (e) {} }
       this.listening = false;
+      this.dialog = false;
+      this.button(false);
+    },
+
+    /** 识别真的用不了：记下状态，并在对话页展示打字/录音的备用方式。 */
+    markFailed: function (msg) {
+      this.failed = true;
+      this.failMsg = msg || "这台手机的语音识别没能启动，先用下面任意一种方式接着说：";
+      this.listening = false;
+      this.dialog = false;
+      this.cb = null;
+      this.button(false);
+      if (currentView === "chat") {
+        Stage.settle();
+        Chat.showFallback(this.failMsg);
+      } else {
+        toast("语音识别用不了，直接在输入框里打字就好");
+      }
     },
 
     onState: function (state, info) {
       if (state === "listening") {
         this.listening = true;
+        this.dialog = false;
         this.button(true);
         if (currentView === "chat") Stage.listen();
       } else if (state === "permission") {
         toast("正在请求麦克风权限…");
-      } else if (state === "unavailable") {
+      } else if (state === "dialog") {
+        // 已经切到系统语音输入面板，等它把结果带回来
         this.listening = false;
+        this.dialog = true;
         this.button(false);
-        toast(info || "本机没有语音识别服务，请用键盘输入");
-        if (this.live) { try { this.live.focus(); } catch (e) {} }
+        if (currentView === "chat") {
+          Stage.listen();
+          $("chatHintLine").textContent = "系统语音输入已打开：说完这句会自动发出去";
+        }
+      } else if (state === "unavailable") {
+        this.markFailed("这台手机没有可用的语音识别，先用下面任意一种方式接着说：");
+      } else if (state === "cancelled") {
+        this.markFailed("系统语音输入没有结果，先用下面任意一种方式接着说：");
       } else if (state === "processing") {
         this.button(true);
         if (currentView === "chat") Stage.think();
@@ -431,7 +593,11 @@
       if (this.live) this.live.value = text;
       if (isFinal) {
         this.listening = false;
+        this.dialog = false;
+        this.failed = false;
+        this.failMsg = "";
         this.button(false);
+        Sf.hide();
         const cb = this.cb;
         this.cb = null;
         if (cb) cb(text);
@@ -439,10 +605,19 @@
     },
 
     onError: function (code, msg) {
+      // 系统语音面板自己的失败走 onActivityResult → onSpeechState('cancelled')
+      if (this.dialog) { this.dialog = false; return; }
       this.listening = false;
       this.button(false);
       this.cb = null;
-      toast(msg || "没有听清，再试一次");
+      // 真正坏掉的错误：2 网络 / 4 服务 / 5 客户端 / 8 识别忙
+      const broken = (code === 2 || code === 4 || code === 5 || code === 8);
+      if (broken) {
+        this.markFailed();
+        return;
+      }
+      if (currentView === "chat") $("chatHintLine").textContent = msg || "没有听清，再点 🎙️ 说一次";
+      else toast(msg || "没有听清，再试一次");
     },
 
     button: function (on) {
@@ -1080,6 +1255,7 @@
     openScenario: function (sc) {
       this.mode = "scenario";
       this.fromReader = false;
+      Sf.hide();
       const scTier = tierOfScenario(sc.id);
       if (scTier) {
         currentConvTier = scTier;
@@ -1110,6 +1286,7 @@
 
     openAI: function (contextTitle, contextText) {
       this.mode = "ai";
+      Sf.hide();
       Stage.listen();
       this.scenario = null;
       this.step = 0;
@@ -1144,6 +1321,7 @@
 
     closeChat: function () {
       TTS.stop();
+      Sf.hide();
       Stage.settle();
       if (this.fromReader && Reader.item) {
         this.fromReader = false;
@@ -1241,19 +1419,22 @@
         return;
       }
       Stage.listen();
-      if (State.settings.autoTurn) {
+      if (State.settings.autoTurn && !ASR.failed) {
         $("chatHintLine").textContent = "轮到你了——直接说英文，麦克风已自动打开";
         const self = this;
         setTimeout(function () { self.startListen(); }, 260);
+      } else if (State.settings.autoTurn && ASR.failed) {
+        // 语音识别已经坏过：不再自动开麦，直接把备用方式摆出来
+        this.showFallback(ASR.failMsg);
       } else {
         $("chatHintLine").textContent = "轮到你了：点 🎙️ 开口说，或者直接打字";
       }
     },
 
     startListen: function () {
-      if (!ASR.available()) {
+      if (ASR.failed) {
         Stage.settle();
-        $("chatHintLine").textContent = "这台设备没有语音识别服务，直接打字就好（也可以用输入法的语音键）";
+        this.showFallback(ASR.failMsg);
         return;
       }
       ASR.start({
@@ -1263,6 +1444,34 @@
           Chat.send(text);
         }
       });
+    },
+
+    showFallback: function (msg) {
+      if (currentView !== "chat") return;
+      if (this.mode === "scenario" && this.finished) return;
+      Sf.show(msg);
+    },
+
+    /** “我已说完，继续”：没识别到文字时，用这一轮的标准说法推进对话。 */
+    sayAloudAndContinue: function () {
+      if (this.mode === "ai") {
+        toast("AI 外教需要一句文字才能接话，先打一句吧");
+        try { $("chatText").focus(); } catch (e) {}
+        return;
+      }
+      const turn = this.currentTurn();
+      if (!turn || this.finished) {
+        toast("这个场景已经结束，可以点“重来”再练一遍");
+        return;
+      }
+      const typed = ($("chatText").value || "").trim();
+      const text = typed || turn.model || (turn.chips && turn.chips[0]) || "";
+      if (!text) {
+        toast("这一轮直接打字也能继续");
+        try { $("chatText").focus(); } catch (e) {}
+        return;
+      }
+      this.send(text);
     },
 
     currentTurn: function () {
@@ -1317,6 +1526,7 @@
 
       this.addMe(msg);
       $("chatText").value = "";
+      Sf.hide();
       const ratio = this.evaluate(msg, turn);
       const self = this;
       let praise = null;
@@ -1366,6 +1576,7 @@
     sendAI: function (msg) {
       this.addMe(msg);
       $("chatText").value = "";
+      Sf.hide();
       this.aiHistory.push({ role: "user", content: msg });
       this.busy = true;
       const self = this;
@@ -1730,6 +1941,18 @@
         Chat.toggleZh();
         break;
       }
+      case "sf-record": {
+        Sf.toggleRecord();
+        break;
+      }
+      case "sf-play": {
+        Sf.play();
+        break;
+      }
+      case "sf-done": {
+        Sf.done();
+        break;
+      }
       case "open-ai-from-reader": {
         Chat.openAI("", "");
         break;
@@ -1997,7 +2220,7 @@
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.0.0";
+      $("aboutVersion").textContent = "版本 1.0.1";
     }
     renderLibrary();
     renderScenarios();

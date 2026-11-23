@@ -4,7 +4,7 @@
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.0.0.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.0.1.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -85,7 +85,8 @@
 
 对方先用英文说一句（自动朗读），你用**语音**或**键盘**回一句：
 
-- 🎙️ **语音回答**：调用系统语音识别，识别到的英文直接填进输入框
+- 🎙️ **语音回答**：调用系统语音识别，识别到的英文直接填进输入框；识别服务不可靠的机型会自动改走系统语音输入面板
+- 🛟 **说不出来也不会卡住**：识别不可用时会自动出现一条备用栏——「🎙️ 录音口语对比」+「✅ 我已说完，继续」+ 2–3 个可点就发的示范句，也能直接打字或用输入法的语音键
 - 💡 **提示**：给中文提示 + 两三句可以直接点用的示范说法
 - 回完立刻有**中文点评**：答得好会夸哪里好，答得偏会给出更地道的说法（可点朗读）
 - 全程有中文对照开关
@@ -120,16 +121,16 @@
 
 ## 三、安装方法
 
-1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.0.0.apk`
+1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.0.1.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
 
-> 安装包用的是 Android 标准 debug 签名，可以直接安装；如果以前装过同名不同签名的版本，先卸载旧版。
+> 安装包用项目自己的 Release 密钥签名，可以直接安装；如果以前装过 debug 签名或别的签名的版本，先卸载旧版再装。
 
 ### 没有 Google 服务的手机（华为 / 荣耀等）
 
 - **朗读**：用的是手机自带的 TTS 引擎（华为、小米、OPPO 等系统都自带），不依赖 Google。若系统里没有中文/英文语音包，到「系统设置 → 无障碍 → 文字转语音」里选一个引擎并下载英语语音即可。
-- **语音识别**：优先用系统识别服务。部分机型没有可用的识别服务时，App 会提示一句，然后你可以：
+- **语音识别**：优先用内嵌识别服务；失败时自动改走系统语音输入面板（手机自带或输入法提供的那个）。两条都不行时，对话页会出现备用栏，然后你可以：
   - 直接用键盘输入英文（推荐，最稳）；
   - 用输入法自带的语音键说话（讯飞、搜狗、百度输入法都支持）；
   - 用「跟读录音 + 回放对比」练发音，这条路径只需要麦克风，任何机型都能用。
@@ -143,7 +144,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，编译 `assembleDebug`，生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.0.0`。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.0.1`。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
@@ -199,7 +200,7 @@ app/src/main/
 A：先确认手机有可用的 TTS 引擎和英语语音包（设置 → 无障碍 → 文字转语音）。部分机型默认引擎是“Google 文字转语音”，没装 Google 服务时为空，换成本机自带的引擎即可。
 
 **Q：语音回答按钮点了没反应？**
-A：说明这台手机没有可用的系统语音识别服务。用键盘输入，或用输入法上的语音键，效果一样。
+A：说明这台手机的内嵌语音识别服务不可靠。v1.0.1 起会自动改走系统语音输入面板；面板也没有或你取消了，对话页会直接给出备用栏（录音对比 / 我已说完，继续 / 示范句），用键盘输入或用输入法上的语音键也一样能练。
 
 **Q：能改内容吗？**
 A：可以，`assets/www/library.js`、`dict.js`、`scenarios.js` 就是纯数据文件，按同样的格式加文章、加单词、加情景即可。

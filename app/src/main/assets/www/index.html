@@ -123,6 +123,16 @@
           <button class="chip" id="btnRestart">🔄 重来</button>
           <button class="chip" id="btnZhChat">中文对照</button>
         </div>
+        <div class="speech-fallback hidden" id="speechFallback" aria-live="polite">
+          <div class="sf-title" id="sfTitle">语音识别暂时用不了，换一种方式接着说：</div>
+          <div class="sf-row">
+            <button class="chip sf-rec" id="sfRecBtn" data-act="sf-record">🎙️ 录音口语对比</button>
+            <button class="chip" id="sfPlayBtn" data-act="sf-play" disabled>🔊 听我的录音</button>
+            <button class="chip sf-go" id="sfDoneBtn" data-act="sf-done">✅ 我已说完，继续</button>
+          </div>
+          <div class="sf-chips" id="sfChips"></div>
+          <div class="sf-note">也可以直接打字，或用输入法键盘上的语音键（话筒/长按空格）说英文。</div>
+        </div>
         <div class="chat-input">
           <button class="icon-btn mic" id="btnMic" aria-label="语音回答">🎙️</button>
           <textarea id="chatText" rows="1" placeholder="用英文回一句，或点🎙️ 说出来"></textarea>
