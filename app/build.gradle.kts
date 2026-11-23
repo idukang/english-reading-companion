@@ -15,13 +15,29 @@ android {
         versionName = "1.0.0"
     }
 
+    signingConfigs {
+        create("release") {
+            val sf = System.getenv("RELEASE_STORE_FILE")
+            if (!sf.isNullOrBlank()) {
+                storeFile = file(sf)
+                storeType = "PKCS12"
+                storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "release"
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: ""
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
         }
         release {
             isMinifyEnabled = false
-            // 未签名 release 无法直接安装，发布用 debug 签名包（见 README）
+            val sf = System.getenv("RELEASE_STORE_FILE")
+            if (!sf.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

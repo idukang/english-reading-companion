@@ -120,13 +120,32 @@ fi
 "${GRADLE_BIN}" --version
 
 # ----------------------------------------------------------------- 编译 -----
-echo "::group::gradle assembleDebug"
-"${GRADLE_BIN}" :app:assembleDebug --no-daemon --stacktrace --console=plain
-echo "::endgroup::"
-
 mkdir -p dist
-APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
 APK_OUT="dist/EnglishReadingCompanion-v1.0.0.apk"
+
+if [ -n "${KEYSTORE_BASE64:-}" ] && [ -n "${KEYSTORE_PASSWORD:-}" ]; then
+  echo "检测到正式签名 Secrets，编译正式签名 Release APK"
+  printf '%s' "${KEYSTORE_BASE64}" | tr -d '\r\n ' | base64 -d > /tmp/release-keystore.p12
+  chmod 600 /tmp/release-keystore.p12
+  export RELEASE_STORE_FILE="/tmp/release-keystore.p12"
+  export RELEASE_STORE_PASSWORD="${KEYSTORE_PASSWORD}"
+  export RELEASE_KEY_ALIAS="${KEY_ALIAS:-release}"
+  export RELEASE_KEY_PASSWORD="${KEYSTORE_PASSWORD}"
+
+  echo "::group::gradle assembleRelease"
+  "${GRADLE_BIN}" :app:assembleRelease --no-daemon --stacktrace --console=plain
+  echo "::endgroup::"
+  rm -f /tmp/release-keystore.p12
+
+  APK_SRC="app/build/outputs/apk/release/app-release.apk"
+else
+  echo "未检测到 KEYSTORE_BASE64 / KEYSTORE_PASSWORD，回退编译 debug 签名包"
+  echo "::group::gradle assembleDebug"
+  "${GRADLE_BIN}" :app:assembleDebug --no-daemon --stacktrace --console=plain
+  echo "::endgroup::"
+
+  APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
+fi
 
 if [ ! -f "${APK_SRC}" ]; then
   echo "::error::没有找到 ${APK_SRC}"
