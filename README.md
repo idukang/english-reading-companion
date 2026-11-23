@@ -141,7 +141,10 @@
 
 ### 用 GitHub Actions（推荐，不用本地环境）
 
-推送到 `main` 即自动编译，产物在 Actions 的 Artifacts，同时自动更新 Release `v1.0.0`。也可以到 Actions 页面点 **Run workflow** 手动触发。
+推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
+真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
+Gradle 8.7，编译 `assembleDebug`，生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.0.0`。
+好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
 
