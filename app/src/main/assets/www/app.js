@@ -9,7 +9,7 @@
 
   /* ========================= 工具 ========================= */
 
-  const $ = (id) => document.getElementById(id);
+  function $(id) { return document.getElementById(id); }
 
   function esc(s) {
     return String(s == null ? "" : s)
@@ -68,7 +68,8 @@
     bilingual: true,
     autoPlay: true,
     loop: false,
-    notes: true
+    notes: true,
+    autoTurn: false
   };
 
   const State = {
@@ -78,6 +79,7 @@
     custom: LS.get("erc.custom", []),
     done: LS.get("erc.done", {}),
     ai: LS.get("erc.ai", null),
+    guideDismissed: LS.get("erc.guide", false),
     showMastered: false
   };
   if (!Array.isArray(State.vocab)) State.vocab = [];
@@ -121,13 +123,15 @@
           window.speechSynthesis.cancel();
           const u = new SpeechSynthesisUtterance(text);
           u.lang = State.settings.accent || "en-US";
-          u.rate = State.settings.speed || 1.0;
+          u.rate = (opts && opts.rate) || State.settings.speed || 1.0;
+          if (opts && opts.onStart) opts.onStart();
           u.onend = function () { if (opts && opts.onEnd) opts.onEnd(); };
           window.speechSynthesis.speak(u);
           return;
         } catch (e) {}
       }
       toast("本机没有可用的语音朗读引擎");
+      if (opts && opts.onStart) opts.onStart();
       if (opts && opts.onEnd) setTimeout(opts.onEnd, 10);
     },
 
@@ -405,6 +409,7 @@
       if (state === "listening") {
         this.listening = true;
         this.button(true);
+        if (currentView === "chat") Stage.listen();
       } else if (state === "permission") {
         toast("正在请求麦克风权限…");
       } else if (state === "unavailable") {
@@ -414,6 +419,7 @@
         if (this.live) { try { this.live.focus(); } catch (e) {} }
       } else if (state === "processing") {
         this.button(true);
+        if (currentView === "chat") Stage.think();
       } else {
         this.listening = false;
         this.button(false);
@@ -517,6 +523,7 @@
   function switchTab(tab) {
     TTS.stop();
     Rec.state = "idle";
+    Stage.settle();
     currentTab = tab;
     $("tabbar").querySelectorAll(".tab").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tab === tab);
@@ -553,6 +560,7 @@
     $("btnAccent").textContent = s.accent === "en-GB" ? "英音" : "美音";
     $("btnLoop").classList.toggle("on", !!s.loop);
     $("btnNotes").classList.toggle("on", !!s.notes);
+    if ($("btnAutoTurn")) $("btnAutoTurn").classList.toggle("on", !!s.autoTurn);
     if (Bridge && Bridge.setSystemBars) {
       try { Bridge.setSystemBars(s.theme === "dark"); } catch (e) {}
     }
@@ -638,6 +646,7 @@
 
   function renderLibrary() {
     const list = $("passageList");
+    if ($("guideCard")) $("guideCard").classList.toggle("hidden", !!State.guideDismissed);
     const items = allItems(currentTier);
     if (!items.length) {
       list.innerHTML = '<div class="empty">这里还没有文章。<br>点下面的按钮，把你想读的英文粘进来。</div>';
@@ -1071,6 +1080,12 @@
     openScenario: function (sc) {
       this.mode = "scenario";
       this.fromReader = false;
+      const scTier = tierOfScenario(sc.id);
+      if (scTier) {
+        currentConvTier = scTier;
+        Stage.setPersona(scTier);
+      }
+      Stage.settle();
       this.scenario = sc;
       this.step = 0;
       this.finished = false;
@@ -1095,6 +1110,7 @@
 
     openAI: function (contextTitle, contextText) {
       this.mode = "ai";
+      Stage.listen();
       this.scenario = null;
       this.step = 0;
       this.finished = false;
@@ -1128,6 +1144,7 @@
 
     closeChat: function () {
       TTS.stop();
+      Stage.settle();
       if (this.fromReader && Reader.item) {
         this.fromReader = false;
         show("reader", Reader.item.titleZh || Reader.item.title, Reader.item.title);
@@ -1179,12 +1196,73 @@
       $("main").scrollTop = $("main").scrollHeight;
     },
 
+    persona: function () {
+      return PERSONAS[Stage.personaId] || PERSONAS.kids;
+    },
+
+    speakAs: function (text, onDone) {
+      const p = this.persona();
+      Stage.speak();
+      TTS.speak(text, {
+        rate: p.speed,
+        onStart: function () { Stage.speak(); },
+        onEnd: function () {
+          Stage.settle();
+          if (onDone) setTimeout(onDone, 220);
+        },
+        onError: function () {
+          Stage.settle();
+          if (onDone) setTimeout(onDone, 220);
+        }
+      });
+    },
+
     partnerLine: function (turn, speak) {
       this.addPartner(turn.en, turn.zh);
       if (speak !== false) {
-        TTS.speak(turn.en, {});
+        const self = this;
+        const p = self.persona();
+        Stage.speak();
+        TTS.speak(turn.en, {
+          rate: p.speed,
+          onStart: function () { Stage.speak(); },
+          onEnd: function () { self.afterPartnerSpeak(); },
+          onError: function () { self.afterPartnerSpeak(); }
+        });
+      } else {
+        Stage.listen();
       }
       $("chatHintLine").textContent = "提示：" + (turn.tip || "用简单的一句英文回答就好");
+    },
+
+    afterPartnerSpeak: function () {
+      if (this.mode !== "scenario" || this.finished) {
+        Stage.settle();
+        return;
+      }
+      Stage.listen();
+      if (State.settings.autoTurn) {
+        $("chatHintLine").textContent = "轮到你了——直接说英文，麦克风已自动打开";
+        const self = this;
+        setTimeout(function () { self.startListen(); }, 260);
+      } else {
+        $("chatHintLine").textContent = "轮到你了：点 🎙️ 开口说，或者直接打字";
+      }
+    },
+
+    startListen: function () {
+      if (!ASR.available()) {
+        Stage.settle();
+        $("chatHintLine").textContent = "这台设备没有语音识别服务，直接打字就好（也可以用输入法的语音键）";
+        return;
+      }
+      ASR.start({
+        input: $("chatText"),
+        onText: function (text) {
+          $("chatText").value = text;
+          Chat.send(text);
+        }
+      });
     },
 
     currentTurn: function () {
@@ -1240,28 +1318,48 @@
       this.addMe(msg);
       $("chatText").value = "";
       const ratio = this.evaluate(msg, turn);
+      const self = this;
+      let praise = null;
+
       if (ratio >= 0.99) {
         this.sys("✅ " + turn.good, null);
+        Stage.celebrate();
+        praise = null;
       } else if (ratio >= 0.5) {
         this.sys("👍 意思到了。" + turn.mid + " 更自然一点：", turn.model);
+        Stage.setState("thinking");
+        praise = turn.model;
       } else {
-        this.sys("🤔 我理解你的意思了，不过这次可以用更直接的说法。参考：", turn.model);
+        this.sys("🤔 我理解你的意思，不过这次可以更直接一点。跟着读一遍：", turn.model);
+        Stage.setState("thinking");
+        praise = turn.model;
       }
 
-      this.step++;
-      const self = this;
-      const nextTurn = this.currentTurn();
-      if (nextTurn) {
-        setTimeout(function () { self.partnerLine(nextTurn, true); }, 520);
+      const proceed = function () {
+        self.step++;
+        const nextTurn = self.currentTurn();
+        if (nextTurn) {
+          setTimeout(function () { self.partnerLine(nextTurn, true); }, 420);
+        } else {
+          self.finished = true;
+          State.done[self.scenario.id] = true;
+          LS.set("erc.done", State.done);
+          const closing = self.scenario.closing;
+          setTimeout(function () {
+            if (closing) self.partnerLine({ en: closing.en, zh: closing.zh, tip: "" }, true);
+            self.sys("🎉 这个场景走完了。想再来一遍可以点“重来”；打开 🎧 连续对话，就能像面对面一样接着聊。", null);
+            if (!State.settings.autoTurn && !LS.get("erc.autoTip", false)) {
+              LS.set("erc.autoTip", true);
+              toast("小提示：打开 🎧 连续对话，说完自动接话，更像真人");
+            }
+          }, 420);
+        }
+      };
+
+      if (praise) {
+        this.speakAs(praise, proceed);
       } else {
-        this.finished = true;
-        State.done[this.scenario.id] = true;
-        LS.set("erc.done", State.done);
-        const closing = this.scenario.closing;
-        setTimeout(function () {
-          if (closing) self.partnerLine({ en: closing.en, zh: closing.zh, tip: "" }, true);
-          self.sys("🎉 这个场景走完了。想再来一遍可以点“重来”，也可以回书库读一篇今天的内容。", null);
-        }, 520);
+        setTimeout(proceed, 620);
       }
     },
 
@@ -1277,6 +1375,7 @@
         return;
       }
       $("chatHintLine").textContent = "AI 正在想…";
+      Stage.think();
       AI.chat(this.aiContext, this.aiHistory)
         .then(function (reply) {
           self.busy = false;
@@ -1285,11 +1384,15 @@
           self.aiHistory.push({ role: "assistant", content: reply });
           self.addPartner(parsed.en, "");
           if (parsed.tip) self.sys("💡 " + parsed.tip, null);
-          TTS.speak(parsed.en, {});
+          self.speakAs(parsed.en, function () {
+            if (State.settings.autoTurn && ASR.available()) self.startListen();
+            else Stage.listen();
+          });
         })
         .catch(function (e) {
           self.busy = false;
           $("chatHintLine").textContent = "";
+          Stage.settle();
           self.sys("请求失败：" + esc(e.message) + "。检查一下接口地址、模型名和 Key，或者稍后再试。", null);
         });
     }
@@ -1433,6 +1536,10 @@
 
   function renderScenarios() {
     const items = SCENARIOS[currentConvTier] || [];
+    Stage.setPersona(currentConvTier);
+    document.querySelectorAll("#stageTiers .persona-btn").forEach(function (b) {
+      if (b.dataset.tier) b.classList.toggle("on", b.dataset.tier === currentConvTier);
+    });
     $("scenarioList").innerHTML = items.map(function (sc) {
       const done = !!State.done[sc.id];
       return '<div class="item" data-act="open-scenario" data-id="' + attr(sc.id) + '">' +
@@ -1467,6 +1574,15 @@
     for (let i = 0; i < tiers.length; i++) {
       const arr = SCENARIOS[tiers[i]] || [];
       for (let j = 0; j < arr.length; j++) if (arr[j].id === id) return arr[j];
+    }
+    return null;
+  }
+
+  function tierOfScenario(id) {
+    const tiers = ["kids", "teen", "adult"];
+    for (let i = 0; i < tiers.length; i++) {
+      const arr = SCENARIOS[tiers[i]] || [];
+      for (let j = 0; j < arr.length; j++) if (arr[j].id === id) return tiers[i];
     }
     return null;
   }
@@ -1618,6 +1734,13 @@
         Chat.openAI("", "");
         break;
       }
+      case "dismiss-guide": {
+        State.guideDismissed = true;
+        LS.set("erc.guide", true);
+        if ($("guideCard")) $("guideCard").classList.add("hidden");
+        toast("已收起引导，点句子就能开始读");
+        break;
+      }
       default:
         break;
     }
@@ -1671,15 +1794,22 @@
       renderLibrary();
     });
 
-    // 对话分段
-    $("convSeg").addEventListener("click", function (e) {
-      const b = e.target.closest(".seg-item");
+    // 角色切换（舞台上的三个陪练 + 连续对话开关）
+    $("stageTiers").addEventListener("click", function (e) {
+      const b = e.target.closest(".persona-btn");
       if (!b) return;
+      if (b.id === "btnAutoTurn") {
+        State.settings.autoTurn = !State.settings.autoTurn;
+        applySettings();
+        toast(State.settings.autoTurn
+          ? "连续对话已打开：对方说完会自动打开麦克风"
+          : "连续对话已关闭，改用手动点 🎙️ 或打字");
+        return;
+      }
+      if (!b.dataset.tier) return;
       currentConvTier = b.dataset.tier;
-      $("convSeg").querySelectorAll(".seg-item").forEach(function (x) {
-        x.classList.toggle("active", x.dataset.tier === currentConvTier);
-      });
       renderScenarios();
+      Stage.settle();
     });
 
     // 阅读工具栏
@@ -1861,6 +1991,8 @@
   function boot() {
     bind();
     applySettings();
+    Stage.personaId = currentConvTier;
+    Stage.mount();
     $("btnShowMastered").classList.toggle("on", State.showMastered);
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}

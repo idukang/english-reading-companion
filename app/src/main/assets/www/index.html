@@ -44,6 +44,14 @@
         <button class="seg-item" data-tier="adult">📰 成人实用</button>
       </div>
 
+      <div class="guide" id="guideCard">
+        <div class="guide-title">第一次用？三个动作就够</div>
+        <div class="guide-row"><span class="g-ico">👆</span><div><b>点句子</b>：读这一句；点第二遍就是重听</div></div>
+        <div class="guide-row"><span class="g-ico">🔍</span><div><b>点单词</b>：看音标和中文，一键收进生词本</div></div>
+        <div class="guide-row"><span class="g-ico">🎙️</span><div><b>点麦克风</b>：跟读录音，或在对话里直接回答</div></div>
+        <button class="btn ghost small" data-act="dismiss-guide">知道了，不再提示</button>
+      </div>
+
       <div class="list" id="passageList"></div>
 
       <div class="block-pad">
@@ -86,24 +94,27 @@
 
     <!-- ================= 对话列表 ================= -->
     <section class="view" id="view-conv">
+      <div data-stage></div>
+      <div class="stage-tiers" id="stageTiers">
+        <button data-tier="kids" class="persona-btn on">🧸 Buddy</button>
+        <button data-tier="teen" class="persona-btn">🎒 Emma</button>
+        <button data-tier="adult" class="persona-btn">📰 Alex</button>
+        <button class="persona-btn auto" id="btnAutoTurn">🎧 连续对话</button>
+      </div>
+
       <div class="hero">
         <div class="hero-title">开口说，才算学会</div>
-        <div class="hero-sub">每个情景都是真实的说话现场：对方先说一句，你回一句，说完还有中文点评。</div>
+        <div class="hero-sub">三个陪练角色对应三个年龄段：Buddy 陪你玩着说，Emma 帮你改句式，Alex 像真实职场那样追问。</div>
       </div>
 
       <div class="ai-card" id="aiCard"></div>
-
-      <div class="seg" id="convSeg">
-        <button class="seg-item active" data-tier="kids">🧸 少儿</button>
-        <button class="seg-item" data-tier="teen">🎒 校园</button>
-        <button class="seg-item" data-tier="adult">📰 成人</button>
-      </div>
 
       <div class="list" id="scenarioList"></div>
     </section>
 
     <!-- ================= 聊天 ================= -->
     <section class="view" id="view-chat">
+      <div data-stage data-compact="1" id="stageChat"></div>
       <div class="chat-head" id="chatHead"></div>
       <div class="chat-stream" id="chatStream"></div>
       <div class="chat-dock">
@@ -340,6 +351,7 @@
 
 <script src="library.js"></script>
 <script src="dict.js"></script>
+<script src="persona.js"></script>
 <script src="scenarios.js"></script>
 <script src="app.js"></script>
 </body>
