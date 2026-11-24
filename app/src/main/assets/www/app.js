@@ -116,7 +116,9 @@
     autoPlay: true,
     loop: false,
     notes: true,
-    autoTurn: false
+    autoTurn: false,
+    // 英文音色：neural = 内置离线神经音色（默认），system = 手机自带语音
+    voice: "neural"
   };
 
   /* ========================= 多人本地学习档案 =========================
@@ -145,7 +147,7 @@
         }
         s = {
           active: id,
-          list: [{ id: id, name: "默认档案", emoji: "🧸", tier: "kids", speed: speed, created: Date.now() }]
+          list: [{ id: id, name: "默认档案", emoji: "🧸", tier: "kids", speed: speed, voice: "neural", created: Date.now() }]
         };
         // 旧版单套学习数据整体搬进默认档案（原键保留，不删任何记录）
         ["read", "vocab", "custom", "done"].forEach(function (k) {
@@ -168,6 +170,7 @@
         p.emoji = PROFILE_EMOJIS.indexOf(p.emoji) >= 0 ? p.emoji : PROFILE_EMOJIS[0];
         p.tier = (p.tier === "teen" || p.tier === "adult") ? p.tier : "kids";
         p.speed = (typeof p.speed === "number" && p.speed > 0) ? p.speed : 1.0;
+        p.voice = (p.voice === "system") ? "system" : "neural";
       });
       if (!s.list.some(function (p) { return p.id === s.active; })) s.active = s.list[0].id;
 
@@ -208,6 +211,7 @@
       if (PROFILE_EMOJIS.indexOf(patch.emoji) >= 0) p.emoji = patch.emoji;
       if (patch.tier === "kids" || patch.tier === "teen" || patch.tier === "adult") p.tier = patch.tier;
       if (typeof patch.speed === "number" && patch.speed > 0) p.speed = patch.speed;
+      if (patch.voice === "neural" || patch.voice === "system") p.voice = patch.voice;
       this.saveStore();
       return p;
     },
@@ -225,6 +229,7 @@
         emoji: PROFILE_EMOJIS.indexOf(emoji) >= 0 ? emoji : "🧸",
         tier: (tier === "teen" || tier === "adult") ? tier : "kids",
         speed: (typeof speed === "number" && speed > 0) ? speed : 1.0,
+        voice: "neural",
         created: Date.now()
       };
       this.store.list.push(prof);
@@ -240,6 +245,7 @@
       const cur = this.profile();
       if (cur) {
         cur.speed = Number(State.settings.speed) || cur.speed;
+        cur.voice = State.settings.voice === "system" ? "system" : "neural";
       }
       this.activeId = id;
       this.store.active = id;
@@ -274,7 +280,12 @@
 
   function saveSettings() {
     LS.set("erc.settings", State.settings);
-    if (ProfileStore.store) ProfileStore.setPref({ speed: Number(State.settings.speed) || 1.0 });
+    if (ProfileStore.store) {
+      ProfileStore.setPref({
+        speed: Number(State.settings.speed) || 1.0,
+        voice: State.settings.voice === "system" ? "system" : "neural"
+      });
+    }
   }
   function saveVocab() { ProfileStore.save("vocab", State.vocab); }
   function saveRead() { ProfileStore.save("read", State.read); }
@@ -586,6 +597,7 @@
     currentTier = p.tier || "kids";
     currentConvTier = p.tier || "kids";
     if (typeof p.speed === "number" && p.speed > 0) State.settings.speed = p.speed;
+    State.settings.voice = (p.voice === "system") ? "system" : "neural";
     document.querySelectorAll("#tierSeg .seg-item").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tier === currentTier);
     });
@@ -841,7 +853,7 @@
     onTtsReady: function () {},
 
     onTtsUnavailable: function () {
-      toast("本机语音引擎不可用，朗读功能可能受限");
+      toast("手机系统语音引擎不可用：英文仍可用内置神经音色朗读，中文解释会显示成文字");
     },
 
     onSpeakStart: function (id) {
@@ -940,6 +952,12 @@
 
     onTtsNote: function (code, msg) {
       if (msg) toast(msg);
+    },
+
+    onVoiceEngine: function (state) {
+      neuralVoiceState = state || "idle";
+      fillVoiceStatus();
+      if (state === "failed") toast("内置神经音色加载失败，已自动用系统语音");
     }
   };
 
@@ -1796,6 +1814,13 @@
     $("btnLoop").classList.toggle("on", !!s.loop);
     $("btnNotes").classList.toggle("on", !!s.notes);
     if ($("btnAutoTurn")) $("btnAutoTurn").classList.toggle("on", !!s.autoTurn);
+    document.querySelectorAll("#setVoiceSeg button").forEach(function (b) {
+      b.classList.toggle("active", (b.dataset.voice || "neural") === (s.voice === "system" ? "system" : "neural"));
+    });
+    fillVoiceStatus();
+    if (Bridge && Bridge.setEnglishVoice) {
+      try { Bridge.setEnglishVoice(s.voice === "system" ? "system" : "neural"); } catch (e) {}
+    }
     if (Bridge && Bridge.setSystemBars) {
       try { Bridge.setSystemBars(s.theme === "dark"); } catch (e) {}
     }
@@ -1808,6 +1833,54 @@
   function fmtSpeed(v) {
     const n = Number(v) || 1;
     return (n === 1 ? "1.0" : String(n)) + "x";
+  }
+
+  /* 英文音色：内置离线神经音色（Sherpa-ONNX Supertonic）的加载状态
+     模型加载在原生层后台做，加载中/失败都会自动用系统英文语音顶上，
+     所以这里只需要把状态如实显示出来。 */
+  let neuralVoiceState = "idle";
+  let neuralVoiceChecked = null;
+
+  function hasNeuralVoice() {
+    if (neuralVoiceChecked !== null) return neuralVoiceChecked;
+    neuralVoiceChecked = false;
+    if (Bridge && Bridge.hasNeuralVoice) {
+      try { neuralVoiceChecked = !!Bridge.hasNeuralVoice(); } catch (e) { neuralVoiceChecked = false; }
+    }
+    return neuralVoiceChecked;
+  }
+
+  function fillVoiceStatus() {
+    const el = $("voiceStatus");
+    if (!el) return;
+    const s = State.settings;
+    if (s.voice === "system") {
+      el.textContent = "用手机自带的英文语音；中文解释仍然用系统中文语音，断网可用。";
+      return;
+    }
+    if (!hasNeuralVoice()) {
+      el.textContent = "这个安装包没有内置神经音色，会自动用系统英文语音，朗读不受影响。";
+      return;
+    }
+    if (neuralVoiceState === "ready") {
+      el.textContent = "内置离线神经音色已就绪 · 44.1kHz · 不联网、不上报";
+    } else if (neuralVoiceState === "failed") {
+      el.textContent = "内置神经音色加载失败，已自动回退系统英文语音（功能不受影响）";
+    } else {
+      el.textContent = "内置离线神经音色正在加载…（这几句先用系统语音，就绪后自动换成神经音色）";
+    }
+  }
+
+  function previewVoice() {
+    TTS.stop();
+    if (State.settings.voice !== "system" && neuralVoiceState !== "ready") {
+      toast(neuralVoiceState === "failed"
+        ? "神经音色加载失败，现在听到的是系统语音"
+        : "神经音色还在加载，这一句先用系统语音，稍后再试");
+    }
+    TTS.speak("Hello! This is the little fox. Let us read a story together.", {
+      rate: Number(State.settings.speed) || 1.0
+    });
   }
 
   const SPEEDS = [0.6, 0.75, 0.9, 1.0, 1.2, 1.4];
@@ -1846,6 +1919,9 @@
     });
     document.querySelectorAll("#setAccentSeg button").forEach(function (b) {
       b.classList.toggle("active", b.dataset.accent === s.accent);
+    });
+    document.querySelectorAll("#setVoiceSeg button").forEach(function (b) {
+      b.classList.toggle("active", (b.dataset.voice || "neural") === (s.voice === "system" ? "system" : "neural"));
     });
     document.querySelectorAll("#setLangSeg button").forEach(function (b) {
       b.classList.toggle("active", b.dataset.asrLang === Ear.langMode);
@@ -4036,6 +4112,20 @@
       applySettings();
       fillSettingsForm();
     });
+    if ($("setVoiceSeg")) {
+      $("setVoiceSeg").addEventListener("click", function (e) {
+        const b = e.target.closest("button");
+        if (!b) return;
+        State.settings.voice = b.dataset.voice === "system" ? "system" : "neural";
+        applySettings();
+        fillSettingsForm();
+        TTS.stop();
+        toast(State.settings.voice === "system" ? "英文改用系统语音" : "英文改用内置神经音色");
+      });
+    }
+    if ($("btnVoicePreview")) {
+      $("btnVoicePreview").addEventListener("click", function () { previewVoice(); });
+    }
     if ($("setLangSeg")) {
       $("setLangSeg").addEventListener("click", function (e) {
         const b = e.target.closest("button");

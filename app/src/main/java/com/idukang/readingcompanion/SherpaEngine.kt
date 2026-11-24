@@ -75,7 +75,7 @@ object SherpaEngine {
 
     // ---------- 识别循环 ----------
     private var thread: Thread? = null
-    private var record: AudioRecord? = null
+    @Volatile private var record: AudioRecord? = null
     private var aec: AcousticEchoCanceler? = null
     private val decodeLock = Any()
 
@@ -304,6 +304,20 @@ object SherpaEngine {
     }
 
     fun isTtsSpeakingNow(): Boolean = ttsSpeaking
+
+    /**
+     * 耳机连麦 / 边说边听时，麦克风走的是 VOICE_COMMUNICATION + 系统回声消除；
+     * 神经音色的播放也要用同一路通话音频属性，回声消除才能拿到参考信号，
+     * 打断判定才不会被自己的朗读声误触发。
+     */
+    fun isAecPlaybackActive(): Boolean = loopAecSource || VoiceCompanionService.isActive
+
+    /** AudioRecord 的音频会话号，给 AudioTrack 用，让两者挂在同一个 AEC 会话上。 */
+    fun playbackAudioSessionId(): Int = try {
+        record?.audioSessionId ?: 0
+    } catch (t: Throwable) {
+        0
+    }
 
     // ==================================================================
     // 开始 / 停止

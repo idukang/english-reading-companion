@@ -4,6 +4,9 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
@@ -35,7 +38,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * 全部界面、书库、词库、对话内容都打包在 app/src/main/assets/www 里，完全离线；
  * Kotlin 这层负责本机能力：
- *   1. 系统 TTS 朗读（中英混排会自动分段，中文用中文语音、英文用英文语音）
+ *   1. 朗读：英文用内置的 Supertonic 离线神经音色（自然），中文用系统 TTS，
+ *      中英混排自动分段、无缝衔接；神经音色加载中或出错时自动回退系统英文语音
  *   2. 麦克风录音与回放（跟读对比）
  *   3. 离线语音识别（SenseVoice + Silero VAD，中英混说；可后台、可边说边听、可打断）
  *   4. 耳机后台连麦的前台服务（VoiceCompanionService）
@@ -62,6 +66,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
     private var ttsReady = false
     private var ttsLang = "en-US"
     private var ttsRate = 1.0f
+
+    // 英文音色：neural = 内置离线神经音色（默认），system = 系统语音
+    private var voiceMode = "neural"
+    private lateinit var prefs: android.content.SharedPreferences
+    private var audioFocusReq: AudioFocusRequest? = null
+    private var audioMgr: AudioManager? = null
+    private var focusHeld = false
 
     private data class TtsSegment(val text: String, val zh: Boolean)
 
@@ -149,6 +160,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
             tts = TextToSpeech(this, this)
         } catch (e: Exception) {
             emit("window.Native && window.Native.onTtsUnavailable && window.Native.onTtsUnavailable()")
+        }
+
+        // 离线神经音色：默认开启，启动后台加载模型（不阻塞界面）；加载失败就继续用系统语音
+        prefs = getSharedPreferences("erc_native", MODE_PRIVATE)
+        voiceMode = if (prefs.getString("voice_engine", "neural") == "system") "system" else "neural"
+        NeuralTtsEngine.observe { st ->
+            main.post {
+                emit(
+                    "window.Native && window.Native.onVoiceEngine && window.Native.onVoiceEngine(" +
+                        jsStr(NeuralTtsEngine.statusName()) + ")"
+                )
+            }
+        }
+        if (voiceMode == "neural" && !isLowRamDevice()) NeuralTtsEngine.prepare(applicationContext)
+    }
+
+    /** 1GB 级低内存机型：不预先加载神经音色，等真正要英文朗读时再加载，避免开机就把内存吃满。 */
+    private fun isLowRamDevice(): Boolean {
+        return try {
+            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.isLowRamDevice || am.memoryClass <= 192
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -293,60 +327,101 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
     }
 
     private fun speakNextSegment() {
-        val engine = tts
-        if (engine == null) {
-            finishTtsJob(error = true)
-            return
-        }
         val job = ttsJobId ?: return
         while (ttsSegIndex < ttsSegments.size) {
-            val seg = ttsSegments[ttsSegIndex]
+            val idx = ttsSegIndex
+            val seg = ttsSegments[idx]
             if (seg.text.isBlank()) {
-                ttsSegIndex++
+                ttsSegIndex = idx + 1
                 continue
             }
             ttsCurrentZh = seg.zh
             if (seg.zh && !zhVoiceAvailable) {
                 warnNoChineseVoice()
-                ttsSegIndex++
+                ttsSegIndex = idx + 1
                 continue
             }
-            try {
-                if (seg.zh) {
-                    val res = engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
-                    if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        zhVoiceAvailable = false
-                        warnNoChineseVoice()
-                        ttsSegIndex++
-                        continue
-                    }
-                } else {
-                    val res = engine.setLanguage(Locale.forLanguageTag(ttsLang))
-                    if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        engine.setLanguage(Locale.US)
-                    }
-                }
-                engine.setSpeechRate(ttsRate.coerceIn(0.3f, 2.5f))
-                engine.setPitch(1.0f)
-            } catch (e: Exception) {
+            // 英文片段优先走内置神经音色；模型还没热好/加载失败时自然落到系统语音
+            if (!seg.zh && voiceMode == "neural" && NeuralTtsEngine.isReady()) {
+                speakNeuralSegment(job, idx, seg.text)
+                return
             }
-            val params = Bundle()
-            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-            val code = try {
-                engine.speak(seg.text, TextToSpeech.QUEUE_FLUSH, params, "$job#$ttsSegIndex")
-            } catch (e: Exception) {
-                TextToSpeech.ERROR
-            }
-            if (code != TextToSpeech.SUCCESS) {
-                if (seg.zh) {
-                    ttsSegIndex++
-                    continue
-                }
+            if (speakSystemSegment(job, idx, seg)) return
+            // 这句系统语音也发不出去：中文跳过，英文按失败收尾（与 v1.3.0 一致）
+            if (!seg.zh) {
                 finishTtsJob(error = true)
+                return
             }
-            return
+            ttsSegIndex = idx + 1
         }
         finishTtsJob(error = false)
+    }
+
+    /** 把某一段交给系统 TTS；返回 false 表示这段发不出去（需要调用方决定跳过还是收尾） */
+    private fun speakSystemSegment(job: String, idx: Int, seg: TtsSegment): Boolean {
+        val engine = tts ?: return false
+        ttsCurrentZh = seg.zh
+        try {
+            if (seg.zh) {
+                val res = engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
+                if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    zhVoiceAvailable = false
+                    warnNoChineseVoice()
+                    return false
+                }
+            } else {
+                val res = engine.setLanguage(Locale.forLanguageTag(ttsLang))
+                if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    engine.setLanguage(Locale.US)
+                }
+            }
+            engine.setSpeechRate(ttsRate.coerceIn(0.3f, 2.5f))
+            engine.setPitch(1.0f)
+        } catch (e: Exception) {
+        }
+        val params = Bundle()
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+        val code = try {
+            engine.speak(seg.text, TextToSpeech.QUEUE_FLUSH, params, "$job#$idx")
+        } catch (e: Exception) {
+            TextToSpeech.ERROR
+        }
+        return code == TextToSpeech.SUCCESS
+    }
+
+    /** 神经音色念一句英文；播放、打断、回调顺序与系统 TTS 保持一致 */
+    private fun speakNeuralSegment(job: String, idx: Int, text: String) {
+        NeuralTtsEngine.speak(
+            text = text,
+            rate = ttsRate,
+            onStart = {
+                main.post {
+                    if (ttsJobId != job || ttsSegIndex != idx) return@post
+                    SherpaEngine.noteTtsStart(text)
+                    if (!ttsStartSent) {
+                        ttsStartSent = true
+                        emit("window.Native && window.Native.onSpeakStart && window.Native.onSpeakStart(${jsStr(job)})")
+                    }
+                }
+            },
+            onDone = {
+                main.post {
+                    if (ttsJobId != job || ttsSegIndex != idx) return@post
+                    ttsSegIndex = idx + 1
+                    speakNextSegment()
+                }
+            },
+            onError = {
+                main.post {
+                    if (ttsJobId != job || ttsSegIndex != idx) return@post
+                    // 神经音色这一句没出来：任何时候都不能哑火，立刻换系统英文语音补上
+                    val seg = ttsSegments.getOrNull(idx) ?: TtsSegment(text, false)
+                    if (speakSystemSegment(job, idx, seg)) return@post
+                    ttsSegIndex = idx + 1
+                    if (ttsSegIndex >= ttsSegments.size) finishTtsJob(error = false) else speakNextSegment()
+                }
+            }
+        )
     }
 
     private fun finishTtsJob(error: Boolean) {
@@ -357,6 +432,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         ttsSegIndex = 0
         ttsStartSent = false
         ttsCurrentZh = false
+        releaseAudioFocus()
         SherpaEngine.noteTtsEnd()
         if (job != null) {
             if (error) {
@@ -375,11 +451,68 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         ttsSegIndex = 0
         ttsStartSent = false
         ttsCurrentZh = false
+        releaseAudioFocus()
         SherpaEngine.noteTtsEnd()
+        NeuralTtsEngine.stop()
         try {
             tts?.stop()
         } catch (e: Exception) {
         }
+    }
+
+    // ---------------- 音频焦点（耳机连麦、后台播放时不被音乐/通知抢走） ----------------
+
+    private fun acquireAudioFocus() {
+        if (focusHeld) return
+        val mgr = try {
+            getSystemService(AUDIO_SERVICE) as? AudioManager
+        } catch (e: Exception) {
+            null
+        } ?: return
+        audioMgr = mgr
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setOnAudioFocusChangeListener { change ->
+                        if (change == AudioManager.AUDIOFOCUS_LOSS) main.post { cancelTtsJob() }
+                    }
+                    .build()
+                audioFocusReq = req
+                focusHeld = mgr.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                val ok = mgr.requestAudioFocus(
+                    { change -> if (change == AudioManager.AUDIOFOCUS_LOSS) main.post { cancelTtsJob() } },
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                focusHeld = ok
+            }
+        } catch (e: Exception) {
+            focusHeld = false
+        }
+    }
+
+    private fun releaseAudioFocus() {
+        if (!focusHeld) return
+        focusHeld = false
+        val mgr = audioMgr ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusReq?.let { mgr.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                mgr.abandonAudioFocus(null)
+            }
+        } catch (e: Exception) {
+        }
+        audioFocusReq = null
     }
 
     private fun warnNoChineseVoice() {
@@ -899,7 +1032,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         fun speak(id: String, text: String, rate: Float, lang: String) {
             main.post {
                 val engine = tts
-                if (!ttsReady || engine == null) {
+                // 系统 TTS 不可用但内置神经音色就绪时，英文照样能读，不能整句报错
+                val neuralUsable = voiceMode == "neural" &&
+                    (NeuralTtsEngine.isReady() || NeuralTtsEngine.isLoading())
+                if ((!ttsReady || engine == null) && !neuralUsable) {
                     emit("window.Native && window.Native.onSpeakError && window.Native.onSpeakError(${jsStr(id)})")
                     return@post
                 }
@@ -908,11 +1044,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
                 applyTtsParams()
                 stopPlaybackInternal()
                 cancelTtsJob()
+                // 神经音色还没热好就请求一下，这一句先用系统语音顶上
+                if (voiceMode == "neural" && !NeuralTtsEngine.isReady()) {
+                    NeuralTtsEngine.prepare(applicationContext)
+                }
                 val segs = splitBilingual(text)
                 if (segs.isEmpty()) {
                     emit("window.Native && window.Native.onSpeakEnd && window.Native.onSpeakEnd(${jsStr(id)})")
                     return@post
                 }
+                acquireAudioFocus()
                 ttsJobId = id
                 ttsJobText = text
                 ttsSegments = segs
@@ -926,6 +1067,31 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         fun stopSpeak() {
             main.post { cancelTtsJob() }
         }
+
+        // ---------- 英文音色（离线神经音色 / 系统语音） ----------
+
+        @JavascriptInterface
+        fun setEnglishVoice(mode: String) {
+            val m = if (mode == "system") "system" else "neural"
+            main.post {
+                voiceMode = m
+                prefs.edit().putString("voice_engine", m).apply()
+                if (m == "neural") NeuralTtsEngine.prepare(applicationContext)
+                emit(
+                    "window.Native && window.Native.onVoiceEngine && window.Native.onVoiceEngine(" +
+                        jsStr(NeuralTtsEngine.statusName()) + ")"
+                )
+            }
+        }
+
+        @JavascriptInterface
+        fun englishVoice(): String = voiceMode
+
+        @JavascriptInterface
+        fun voiceEngineState(): String = NeuralTtsEngine.statusName()
+
+        @JavascriptInterface
+        fun hasNeuralVoice(): Boolean = NeuralTtsEngine.hasModel(this@MainActivity)
 
         // ---------- 离线语音（SenseVoice + Silero VAD） ----------
 
@@ -1379,6 +1545,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
             tts?.stop()
             tts?.shutdown()
             tts = null
+        } catch (e: Exception) {
+        }
+        try {
+            releaseAudioFocus()
+            NeuralTtsEngine.release()
         } catch (e: Exception) {
         }
         try {

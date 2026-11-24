@@ -16,3 +16,8 @@ dist/
 app/libs/sherpa-onnx-2.0.3.aar
 app/src/main/assets/sense-voice/
 app/src/main/assets/silero_vad_v4.onnx
+
+# 离线神经音色（构建时下载，不进仓库；许可证与说明随包进 APK）
+app/src/main/assets/tts/*.onnx
+app/src/main/assets/tts/*.bin
+app/src/main/assets/tts/tts.json

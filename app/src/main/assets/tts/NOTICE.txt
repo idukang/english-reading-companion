@@ -1,0 +1,12 @@
+Supertonic 离线神经音色模型（int8）
+
+来源：sherpa-onnx 官方发布的 tts-models 资源包
+  sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2
+  https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+上游模型：Supertone Supertonic TTS（https://github.com/supertone-inc/supertonic）
+
+版权：Copyright (c) 2026 Supertone Inc.
+模型许可：BigScience Open RAIL-M（全文见 LICENSE-OpenRAIL-M.txt）
+运行时：sherpa-onnx（Apache-2.0），已在 sherpa-onnx 2.0.3 内，不额外引入依赖
+
+本应用只在手机本地用它朗读英文，不联网、不上传任何文本或音频。

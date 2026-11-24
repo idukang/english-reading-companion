@@ -11,8 +11,8 @@ android {
         applicationId = "com.idukang.readingcompanion"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.3.0"
+        versionCode = 9
+        versionName = "1.4.0"
 
         // 只打包手机常用的两种架构：x86/x86_64 是模拟器用的，打进来只会让包更大
         ndk {
@@ -69,7 +69,8 @@ android {
 }
 
 dependencies {
-    // 唯一的第三方依赖：Sherpa-ONNX 离线语音（SenseVoiceSmall + Silero VAD）。
+    // 唯一的第三方依赖：Sherpa-ONNX 离线语音（SenseVoiceSmall + Silero VAD 识别，
+    // Supertonic 神经音色合成）。
     // AAR 不进仓库，由 scripts/ci-build.sh（或本地构建）下载到 app/libs/。
     // 本地运行、不联网、不上报；模型文件打包在 assets 里。
     implementation(files("libs/sherpa-onnx-2.0.3.aar"))

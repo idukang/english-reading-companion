@@ -4,7 +4,7 @@
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.3.0.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.4.0.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -39,7 +39,8 @@
 
 ### 2. 点读与复读
 
-- 点任意一句 → 系统 TTS 朗读这一句，句子高亮并自动滚动到屏幕中间
+- 点任意一句 → 朗读这一句，句子高亮并自动滚动到屏幕中间
+- **🗣️ 英文音色（v1.4.0）**：英文默认用打包在安装包里的 **Supertonic 离线神经音色**（44.1kHz、自然停顿与语调，不联网、不上报），中文解释仍用系统中文语音，中英混排自动分段无缝衔接；设置里可切回「系统语音」并一键试听。模型加载中或出错时自动回退系统英文语音，任何时候都不会哑火；音色选择按学习档案分别记住
 - **朗读全篇**：逐句连读，读到哪里高亮到哪里
 - 语速 0.6x / 0.75x / 0.9x / 1.0x / 1.2x / 1.4x 六档
 - 口音：美音 `en-US` / 英音 `en-GB`
@@ -136,7 +137,7 @@
 
 ## 三、安装方法
 
-1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.3.0.apk`
+1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.4.0.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
 
@@ -159,7 +160,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.3.0`。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.4.0`。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
@@ -197,8 +198,10 @@ app/src/main/
 ```
 
 技术栈：Android `Activity` + `WebView` + `JavascriptInterface`，界面用原生 HTML/CSS/JS，连 AndroidX 都没有。
-唯一的第三方依赖是离线语音识别 **Vosk**（`com.alphacephei:vosk-android` + JNA，Apache-2.0，本地推理、不联网），
-语音模型（英文 small-en-us-0.15 / 中文 small-cn-0.22，各约 40MB）在构建时下载并打进 `assets/`，所以安装包约 90MB。
+唯一的第三方依赖是 **Sherpa-ONNX 2.0.3**（Apache-2.0，本地推理、不联网）：
+识别用 SenseVoiceSmall int8 + Silero VAD（中英混说、可打断），英文朗读用 Supertonic int8 神经音色
+（模型按 OpenRAIL-M 许可随包分发，许可证与来源说明在 `assets/tts/`）。
+模型都在构建时下载并打进 `assets/`，所以安装包约 265MB。
 没有任何统计、广告、崩溃上报 SDK。
 
 ---
@@ -212,6 +215,7 @@ app/src/main/
   - `FOREGROUND_SERVICE(_MICROPHONE/_MEDIA_PLAYBACK)` + `WAKE_LOCK`：只在你打开「耳机后台连麦」时使用，熄屏后继续听你说的
   - `POST_NOTIFICATIONS`：显示那条「耳机语音对话中」的通知（Android 13+）；不给也能用，只是看不到通知
 - 生词本、已读进度、设置、AI 配置都存在本机应用私有存储里，卸载即清除
+- 英文朗读用的是随包分发的 Supertonic 神经音色模型（Supertone，OpenRAIL-M），推理全在本机；发送给它朗读的文字不出手机
 - 应用内所有跳转都被拦截，不能打开外部网页
 
 ---
@@ -219,7 +223,10 @@ app/src/main/
 ## 七、常见问题
 
 **Q：点了句子没声音？**
-A：先确认手机有可用的 TTS 引擎和英语语音包（设置 → 无障碍 → 文字转语音）。部分机型默认引擎是“Google 文字转语音”，没装 Google 服务时为空，换成本机自带的引擎即可。
+A：英文默认用内置神经音色，不需要系统语音包；中文解释要用系统中文语音，若手机没有中文语音包会提示并把中文显示成文字。设置 →「英文音色」可以切回系统语音对比一下。
+
+**Q：神经音色听起来比系统的慢半拍？**
+A：模型在手机本地合成，每句开头有 0.3–1 秒的合成时间（模型越大越明显），播放本身是实时的。第一次开机加载模型大约 1–3 秒，这期间会自动用系统语音顶上。
 
 **Q：语音回答按钮点了没反应？**
 A：v1.1.0 起默认用打包在安装包里的 Vosk 离线识别，不再依赖系统的语音服务，国内 ROM 上也能用。第一次点会花 1–2 秒把模型解包到应用私有目录。如果仍然没反应，对话页会自动出现备用栏（录音对比 / 我已说完，继续 / 示范句），也可以直接打字。
@@ -241,3 +248,6 @@ A：代码是公开的，谁都可以核对；就算这里变了，你也可以�
 ## 八、许可
 
 [MIT License](LICENSE)。书库、词库、情景对话内容可以自由使用、修改、再分发，保留版权声明即可。
+
+内置语音模型另有许可：Supertonic 神经音色模型为 BigScience Open RAIL-M（全文见 `app/src/main/assets/tts/LICENSE-OpenRAIL-M.txt`），
+SenseVoiceSmall 与 Silero VAD 见各自上游仓库；它们只作为模型文件随包分发，本仓库代码仍为 MIT。
