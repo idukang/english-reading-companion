@@ -286,15 +286,9 @@ object NeuralTtsEngine {
             .setAudioFormat(format)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(bufBytes)
-        if (aec) {
-            val session = SherpaEngine.playbackAudioSessionId()
-            if (session > 0) {
-                try {
-                    builder.setSessionId(session)
-                } catch (e: Throwable) {
-                }
-            }
-        }
+        // 注意：这里不 setSessionId 绑定 AudioRecord 的输入会话。
+        // 输入会话不是合法的输出会话，部分机型会直接 createTrack 失败；
+        // 回声消除靠 USAGE_VOICE_COMMUNICATION 走通话音频路径就够（与 SherpaEngine 的自适应回声阈值互补）。
         val at = builder.build()
         if (at.state != AudioTrack.STATE_INITIALIZED) {
             try {

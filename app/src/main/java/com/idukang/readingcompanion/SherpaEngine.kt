@@ -312,13 +312,6 @@ object SherpaEngine {
      */
     fun isAecPlaybackActive(): Boolean = loopAecSource || VoiceCompanionService.isActive
 
-    /** AudioRecord 的音频会话号，给 AudioTrack 用，让两者挂在同一个 AEC 会话上。 */
-    fun playbackAudioSessionId(): Int = try {
-        record?.audioSessionId ?: 0
-    } catch (t: Throwable) {
-        0
-    }
-
     // ==================================================================
     // 开始 / 停止
     // ==================================================================
