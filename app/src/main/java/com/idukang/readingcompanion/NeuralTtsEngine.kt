@@ -89,6 +89,9 @@ object NeuralTtsEngine {
 
     /** assets/tts 里是否带了完整模型（没带就永远走系统语音，不报错）。 */
     fun hasModel(ctx: Context): Boolean {
+        // 32 位进程（armeabi-v7a 老机型）上这个 66M 参数的模型算得太慢，
+        // 每句要好几秒，体验比系统语音还差；直接不进这条路。
+        if (!android.os.Process.is64Bit()) return false
         return try {
             val am = ctx.applicationContext.assets
             val list = am.list(DIR) ?: return false
@@ -113,6 +116,11 @@ object NeuralTtsEngine {
         synchronized(this) {
             if (state == State.READY || state == State.LOADING || state == State.FAILED) return
             val app = ctx.applicationContext
+            // 32 位进程上干脆不走神经音色（不报错、不弹提示），界面会显示回退说明
+            if (!android.os.Process.is64Bit()) {
+                setState(State.IDLE)
+                return
+            }
             if (!hasModel(app)) {
                 setState(State.FAILED)
                 return

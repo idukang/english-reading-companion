@@ -1859,7 +1859,7 @@
       return;
     }
     if (!hasNeuralVoice()) {
-      el.textContent = "这个安装包没有内置神经音色，会自动用系统英文语音，朗读不受影响。";
+      el.textContent = "这台手机用不了内置神经音色（安装包或机型不支持），会自动用系统英文语音，朗读不受影响。";
       return;
     }
     if (neuralVoiceState === "ready") {
