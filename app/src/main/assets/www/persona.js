@@ -4,6 +4,7 @@
    · 三个分人群角色，全部是内联 SVG，无外部图片/视频依赖
    · 状态：idle 待命 / speaking 说话 / listening 倾听 / thinking 思考 / happy 庆祝
    · 说话时嘴型动、波形环脉冲；答得好会弹跳并撒星星
+   · 状态光晕与声波点参考：Lucian UX/UI Prompt（MIT, github.com/Seokwoooo/lucian-uxui-prompt）
    =========================================================== */
 
 const PERSONAS = {
@@ -148,9 +149,11 @@ const Stage = {
   html: function (compact, slim) {
     const p = this.persona();
     if (slim) {
-      return '<div class="stage-face">' + p.svg + "</div>" +
+      return '<span class="stage-halo" aria-hidden="true"><i></i><i></i><i></i></span>' +
+        '<div class="stage-face">' + p.svg + "</div>" +
         '<div class="stage-meta">' +
           '<div class="stage-badge"><i class="dot"></i><span class="badge-text"></span></div>' +
+          '<div class="stage-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>' +
           '<div class="stage-live-note">SenseVoice 离线识别 · 中英混说 · 说完自动接话</div>' +
         "</div>" +
         '<div class="stage-confetti"></div>';
@@ -158,12 +161,14 @@ const Stage = {
     return '<div class="stage-arm">' +
         '<span class="wave w1"></span><span class="wave w2"></span><span class="wave w3"></span>' +
       "</div>" +
+      '<span class="stage-halo" aria-hidden="true"><i></i><i></i><i></i></span>' +
       '<div class="stage-face">' + p.svg + "</div>" +
       '<div class="stage-meta">' +
         '<div class="stage-name">' + p.name +
           '<span class="stage-cn">' + p.cn + "</span></div>" +
         '<div class="stage-badge"><i class="dot"></i><span class="badge-text">' +
           (p.status[this.state] || p.status.idle) + "</span></div>" +
+        '<div class="stage-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>' +
         '<div class="stage-role">' + p.role + "</div>" +
       "</div>" +
       '<div class="stage-confetti"></div>';
@@ -210,6 +215,12 @@ const Stage = {
       }
       if (state === "happy") self.burst(host);
     });
+    // 对话输入框的麦克风：思考 / 说话时也有对应反馈（“在听”由识别状态控制）
+    const mic = document.getElementById("btnMic");
+    if (mic) {
+      mic.classList.toggle("mic-thinking", state === "thinking");
+      mic.classList.toggle("mic-speaking", state === "speaking");
+    }
   },
 
   burst: function (host) {

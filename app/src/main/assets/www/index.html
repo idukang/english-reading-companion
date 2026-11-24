@@ -35,6 +35,10 @@
         <div class="hero-chips">
           <span class="stat" id="statRead">已读 0 篇</span>
           <span class="stat" id="statWords">生词 0 个</span>
+          <span class="stat stat-streak" id="statStreak" title="连续学习天数 · 只记在本机">
+            <svg class="sf-flame" viewBox="0 0 24 24" aria-hidden="true"><path class="fl-o" d="M12 1.7c1.1 4.3 6.2 6 6.2 11.4a6.2 6.2 0 0 1-12.4 0C5.8 8.4 10 7 12 1.7Z"/><path class="fl-i" d="M12 8.6c.6 2.4 3.1 3.3 3.1 6.2a3.1 3.1 0 0 1-6.2 0c0-2.6 2.1-3.6 3.1-6.2Z"/></svg>
+            <span id="streakText">连续 0 天</span>
+          </span>
           <span class="stat" id="statOffline">完全离线</span>
         </div>
       </div>
@@ -76,7 +80,10 @@
 
       <div class="toolbar">
         <div class="row">
-          <button class="btn primary grow" id="btnPlayAll">▶ 朗读全篇</button>
+          <button class="btn primary grow play-btn" id="btnPlayAll" aria-pressed="false" aria-label="朗读全篇">
+            <span class="pb-ico" aria-hidden="true"><i class="pb-play"></i><i class="pb-pause"></i></span>
+            <span class="pb-label">朗读全篇</span>
+          </button>
           <button class="btn" id="btnStop">■ 停止</button>
         </div>
         <div class="row wrap">
@@ -155,7 +162,11 @@
           <div class="sf-note">也可以直接打字，或用输入法键盘上的语音键（话筒/长按空格）说英文。</div>
         </div>
         <div class="chat-input">
-          <button class="icon-btn mic" id="btnMic" aria-label="语音回答">🎙️</button>
+          <button class="icon-btn mic" id="btnMic" aria-label="语音回答" aria-pressed="false">
+            <span class="mic-rings" aria-hidden="true"><i></i><i></i></span>
+            <span class="mic-ico" aria-hidden="true">🎙️</span>
+            <span class="mic-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+          </button>
           <textarea id="chatText" rows="1" placeholder="用英文回一句，或点🎙️ 说出来"></textarea>
           <button class="btn primary send-btn" id="btnSend">发送</button>
         </div>
@@ -178,6 +189,8 @@
       <div id="vocabList"></div>
       <div id="flashWrap" class="hidden">
         <div class="flash-card" id="flashCard">
+          <span class="fc-stamp fc-yes" aria-hidden="true">已掌握</span>
+          <span class="fc-stamp fc-no" aria-hidden="true">再记一下</span>
           <div class="flash-front" id="flashFront">
             <div class="flash-word" id="flashWord">word</div>
             <div class="flash-ipa" id="flashIpa"></div>
@@ -189,6 +202,7 @@
             <div class="flash-ex" id="flashEx"></div>
           </div>
         </div>
+        <div class="flash-swipe-hint">← 左滑再记一下 · 右滑标记已掌握 →</div>
         <div class="row">
           <button class="btn" id="flashPrev">上一个</button>
           <button class="btn primary grow" id="flashSpeak">🔊 读一遍</button>
@@ -407,7 +421,7 @@
   </div>
 </div>
 
-<div class="toast hidden" id="toast"></div>
+<div class="toast-host" id="toast" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <script src="library.js"></script>
 <script src="dict.js"></script>

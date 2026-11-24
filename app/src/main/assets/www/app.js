@@ -2,6 +2,7 @@
    英语陪读 —— 应用逻辑
    · 全部内容本地运行，不加载任何外部脚本、不发送统计
    · 与安卓外壳通过 window.AndroidBridge 通信（TTS / 录音 / 语音识别 / 联网）
+   · 部分交互与动效参考：Lucian UX/UI Prompt（MIT, github.com/Seokwoooo/lucian-uxui-prompt）
    =========================================================== */
 
 (function () {
@@ -37,13 +38,59 @@
       .trim() + " ");
   }
 
-  let toastTimer = null;
+  let toastSeq = 0;
+  /**
+   * 轻提示：可堆叠、带细进度条。
+   * 保留原来的调用方式 toast("文字")，任何页面都能直接用；最多同时叠 3 条，
+   * 新的从下方弹入，旧的到时间自动收走，点一下也能提前关。
+   */
   function toast(msg) {
-    const el = $("toast");
-    el.textContent = msg;
-    el.classList.remove("hidden");
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.classList.add("hidden"); }, 2600);
+    const host = $("toast");
+    if (!host) return;
+    const el = document.createElement("div");
+    el.className = "toast-item";
+    el.dataset.tid = String(++toastSeq);
+    el.innerHTML = '<span class="t-ico" aria-hidden="true">✦</span>' +
+      '<span class="t-msg"></span><span class="t-bar" aria-hidden="true"><i></i></span>';
+    el.querySelector(".t-msg").textContent = String(msg == null ? "" : msg);
+    host.appendChild(el);
+    while (host.children.length > 3) host.removeChild(host.firstChild);
+
+    const life = Math.max(2400, Math.min(4600, 2200 + String(msg || "").length * 55));
+    const bar = el.querySelector(".t-bar i");
+    bar.style.animationDuration = life + "ms";
+
+    let closed = false;
+    let left = life;
+    let started = Date.now();
+    let timer = null;
+    function close() {
+      if (closed) return;
+      closed = true;
+      clearTimeout(timer);
+      el.classList.add("out");
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }
+    function arm(ms) {
+      clearTimeout(timer);
+      started = Date.now();
+      left = ms;
+      timer = setTimeout(close, ms);
+    }
+    arm(life);
+    el.addEventListener("click", close);
+    // 手指按住或鼠标悬停时先别消失，松开后接着上一段剩余时间
+    el.addEventListener("pointerenter", function () {
+      if (closed) return;
+      clearTimeout(timer);
+      left = Math.max(400, left - (Date.now() - started));
+      bar.style.animationPlayState = "paused";
+    });
+    el.addEventListener("pointerleave", function () {
+      if (closed) return;
+      bar.style.animationPlayState = "running";
+      arm(left);
+    });
   }
 
   const Bridge = window.AndroidBridge || null;
@@ -88,6 +135,107 @@
 
   function saveSettings() { LS.set("erc.settings", State.settings); }
   function saveVocab() { LS.set("erc.vocab", State.vocab); }
+
+  /* ========================= 连续学习天数 =========================
+     只在 localStorage 里记今天有没有学，不联网、不上报。
+     读一篇文章、收一个生词、开始一次对话都算一天。 */
+
+  const Streak = {
+    key: "erc.streak",
+    data: { last: "", count: 0 },
+
+    load: function () {
+      const d = LS.get(this.key, null);
+      if (d && typeof d === "object" && typeof d.last === "string" && typeof d.count === "number") {
+        this.data = { last: d.last, count: Math.max(0, d.count) };
+      }
+      return this.data;
+    },
+
+    dayKey: function (d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return y + "-" + m + "-" + day;
+    },
+
+    // 按“本地日历日”加减一天（走 Date，避开夏令时）
+    shiftKey: function (key, delta) {
+      const p = String(key).split("-").map(Number);
+      if (p.length !== 3) return "";
+      const d = new Date(p[0], p[1] - 1, p[2], 12, 0, 0);
+      d.setDate(d.getDate() + delta);
+      return this.dayKey(d);
+    },
+
+    current: function () {
+      const today = this.dayKey(new Date());
+      if (this.data.last === today) return this.data.count || 0;
+      if (this.data.last === this.shiftKey(today, -1)) return this.data.count || 0;
+      return 0;
+    },
+
+    mark: function () {
+      const today = this.dayKey(new Date());
+      if (this.data.last === today) {
+        this.render(false);
+        return;
+      }
+      const count = this.data.last === this.shiftKey(today, -1) ? (this.data.count || 0) + 1 : 1;
+      this.data = { last: today, count: count };
+      LS.set(this.key, this.data);
+      this.render(true);
+    },
+
+    render: function (pop) {
+      const box = $("statStreak");
+      const txt = $("streakText");
+      if (!box || !txt) return;
+      const n = this.current();
+      txt.textContent = n > 0 ? "连续 " + n + " 天" : "今天开个头";
+      box.style.setProperty("--heat", String(Math.min(1, n / 7)));
+      box.classList.toggle("hot", n > 0);
+      if (pop) {
+        box.classList.remove("pop");
+        void box.offsetWidth;
+        box.classList.add("pop");
+      }
+    }
+  };
+  Streak.load();
+
+  /* ========================= 分段控件滑动胶囊 ========================= */
+
+  function syncSeg(seg, animate) {
+    if (!seg) return;
+    let pill = null;
+    for (let i = 0; i < seg.children.length; i++) {
+      if (seg.children[i].classList.contains("seg-pill")) { pill = seg.children[i]; break; }
+    }
+    if (!pill) {
+      pill = document.createElement("span");
+      pill.className = "seg-pill";
+      pill.setAttribute("aria-hidden", "true");
+      seg.insertBefore(pill, seg.firstChild);
+    }
+    seg.classList.add("has-pill");
+    const active = seg.querySelector(".active") || seg.querySelector("button");
+    const sr = seg.getBoundingClientRect();
+    if (!active || !sr.width) { pill.style.opacity = "0"; return; }
+    const ar = active.getBoundingClientRect();
+    pill.style.opacity = "1";
+    if (animate === false) pill.style.transition = "none";
+    pill.style.width = ar.width.toFixed(1) + "px";
+    pill.style.transform = "translateX(" + (ar.left - sr.left).toFixed(1) + "px)";
+    if (animate === false) {
+      void pill.offsetWidth;
+      pill.style.transition = "";
+    }
+  }
+
+  function syncAllSegs(animate) {
+    document.querySelectorAll(".seg").forEach(function (s) { syncSeg(s, animate); });
+  }
 
   /* ========================= 朗读 ========================= */
 
@@ -791,7 +939,11 @@
 
     button: function (on) {
       const mic = $("btnMic");
-      if (mic) mic.classList.toggle("rec", !!on);
+      if (mic) {
+        mic.classList.toggle("rec", !!on);
+        mic.classList.toggle("mic-listening", !!on);
+        mic.setAttribute("aria-pressed", on ? "true" : "false");
+      }
       document.querySelectorAll('[data-act="qa-mic"]').forEach(function (b) {
         b.style.background = on ? "var(--warm)" : "";
         b.style.color = on ? "#fff" : "";
@@ -1146,6 +1298,9 @@
         b.classList.remove("active");
       });
     }
+    if (typeof syncAllSegs === "function") {
+      requestAnimationFrame(function () { syncAllSegs(); });
+    }
   }
 
   function switchTab(tab) {
@@ -1194,6 +1349,9 @@
       try { Bridge.setSystemBars(s.theme === "dark"); } catch (e) {}
     }
     saveSettings();
+    try {
+      if (Reader.item) requestAnimationFrame(function () { Reader.placeBar(); });
+    } catch (e) {}
   }
 
   function fmtSpeed(v) {
@@ -1255,6 +1413,9 @@
     $("aiStatus").textContent = AI.configured()
       ? "已配置：" + (AI_PRESETS[(State.ai || {}).provider] || { name: "自定义" }).name + " · " + State.ai.model
       : "未配置。下方内置功能全部无需联网。";
+    if (typeof syncAllSegs === "function") {
+      requestAnimationFrame(function () { syncAllSegs(); });
+    }
   }
 
   /* ========================= 书库 ========================= */
@@ -1303,6 +1464,7 @@
     }
     $("statRead").textContent = "已读 " + State.read.length + " 篇";
     $("statWords").textContent = "生词 " + State.vocab.length + " 个";
+    Streak.render(false);
   }
 
   let currentTier = "kids";
@@ -1326,11 +1488,11 @@
       $("readerMeta").innerHTML = meta.map(function (m) { return "<span>" + esc(m) + "</span>"; }).join("");
 
       this.renderSentences(item);
-
       renderQA(item);
       Rec.has = false;
       Rec.state = "idle";
       Rec.refresh();
+      Streak.mark();
       show("reader", item.titleZh || item.title, item.title);
       resetActive();
       renderLibrary();
@@ -1338,15 +1500,17 @@
 
     renderSentences: function (item) {
       const wrap = $("sentences");
-      wrap.innerHTML = (item.sentences || []).map(function (s, i) {
-        const zh = (item.zh && item.zh[i]) ? item.zh[i] : "";
-        const note = (item.notes && item.notes[i]) ? item.notes[i] : "";
-        return '<div class="sent" data-idx="' + i + '">' +
-          '<div class="en"><span class="index">' + (i + 1) + "</span>" + renderEn(s) + "</div>" +
-          (State.settings.bilingual && zh ? '<div class="zh">' + esc(zh) + "</div>" : "") +
-          (State.settings.notes && note ? '<div class="note">' + esc(note) + "</div>" : "") +
-        "</div>";
-      }).join("");
+      wrap.innerHTML = '<span class="focus-bar" aria-hidden="true"></span>' +
+        (item.sentences || []).map(function (s, i) {
+          const zh = (item.zh && item.zh[i]) ? item.zh[i] : "";
+          const note = (item.notes && item.notes[i]) ? item.notes[i] : "";
+          return '<div class="sent" data-idx="' + i + '">' +
+            '<div class="en"><span class="index">' + (i + 1) + "</span>" + renderEn(s) + "</div>" +
+            (State.settings.bilingual && zh ? '<div class="zh">' + esc(zh) + "</div>" : "") +
+            (State.settings.notes && note ? '<div class="note">' + esc(note) + "</div>" : "") +
+          "</div>";
+        }).join("");
+      if (this.playing) this.focusOn();
     },
 
     rerender: function () {
@@ -1358,6 +1522,9 @@
 
     close: function () {
       TTS.stop();
+      this.playing = false;
+      this.ui(false);
+      this.clearFocus();
       this.item = null;
       switchTab("library");
     },
@@ -1384,6 +1551,47 @@
       if (node && node.scrollIntoView) {
         try { node.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
       }
+      this.placeBar();
+    },
+
+    /** 当前朗读句的聚焦竖条：跟着句子平滑移动，句子多长竖条就多高 */
+    placeBar: function () {
+      const wrap = $("sentences");
+      if (!wrap) return;
+      const bar = wrap.querySelector(".focus-bar");
+      const node = wrap.querySelector(".sent.active");
+      if (!bar || !node) return;
+      // 用实际渲染矩形算，字体档位变化、换行多行时都能对准
+      const wr = wrap.getBoundingClientRect();
+      const nr = node.getBoundingClientRect();
+      const top = nr.height ? (nr.top - wr.top) : node.offsetTop;
+      const h = nr.height ? nr.height : node.offsetHeight;
+      bar.style.height = Math.max(10, h - 14) + "px";
+      bar.style.transform = "translateY(" + (top + 7) + "px)";
+    },
+
+    focusOn: function () {
+      const wrap = $("sentences");
+      if (!wrap) return;
+      wrap.classList.add("is-focus");
+      this.placeBar();
+    },
+
+    clearFocus: function () {
+      const wrap = $("sentences");
+      if (wrap) wrap.classList.remove("is-focus");
+    },
+
+    /** 朗读/暂停按钮的图标与文字同步（三角 ↔ 双竖条） */
+    ui: function (playing) {
+      const btn = $("btnPlayAll");
+      if (!btn) return;
+      btn.classList.toggle("is-playing", !!playing);
+      btn.setAttribute("aria-pressed", playing ? "true" : "false");
+      btn.setAttribute("aria-label", playing ? "暂停朗读" : "朗读全篇");
+      const label = btn.querySelector(".pb-label");
+      if (label) label.textContent = playing ? "暂停" : "朗读全篇";
+      else btn.textContent = playing ? "⏸ 暂停" : "▶ 朗读全篇";
     },
 
     playing: false,
@@ -1399,13 +1607,15 @@
       if (!this.item) return;
       if (idx >= this.width()) {
         this.playing = false;
-        $("btnPlayAll").textContent = "▶ 朗读全篇";
+        this.ui(false);
+        this.clearFocus();
         return;
       }
       this.idx = idx;
       this.playing = true;
-      $("btnPlayAll").textContent = "⏸ 暂停";
+      this.ui(true);
       this.setActive(idx);
+      this.focusOn();
       const self = this;
       const text = plainSentence(this.item.sentences[idx]);
       TTS.speak(text, {
@@ -1425,11 +1635,16 @@
       if (!this.item) return;
       this.idx = idx;
       this.setActive(idx);
+      this.focusOn();
       const self = this;
       const text = plainSentence(this.item.sentences[idx]);
       TTS.speak(text, {
         onEnd: function () {
           if (State.settings.loop) self.speakOne(idx);
+          else setTimeout(function () { if (!self.playing) self.clearFocus(); }, 520);
+        },
+        onError: function () {
+          if (!State.settings.loop) setTimeout(function () { if (!self.playing) self.clearFocus(); }, 300);
         }
       });
     },
@@ -1437,7 +1652,8 @@
     stop: function () {
       this.playing = false;
       TTS.stop();
-      $("btnPlayAll").textContent = "▶ 朗读全篇";
+      this.ui(false);
+      this.clearFocus();
     }
   };
 
@@ -1538,6 +1754,7 @@
     saveVocab();
     renderLibrary();
     toast("已加入生词本：" + w);
+    Streak.mark();
   }
 
   function renderVocab() {
@@ -1577,6 +1794,9 @@
     list: [],
     i: 0,
     flipped: false,
+    suppressClick: false,
+    swiping: false,
+    bound: false,
 
     open: function () {
       this.list = State.vocab.filter(function (v) { return !v.mastered; });
@@ -1585,7 +1805,9 @@
       this.flipped = false;
       $("vocabList").classList.add("hidden");
       $("flashWrap").classList.remove("hidden");
+      this.bindSwipe();
       this.render();
+      Streak.mark();
     },
 
     close: function () {
@@ -1597,6 +1819,7 @@
     render: function () {
       const v = this.list[this.i];
       if (!v) { this.close(); return; }
+      this.resetCard();
       $("flashWord").textContent = v.w;
       $("flashIpa").textContent = v.ipa || "";
       $("flashFront").classList.toggle("hidden", this.flipped);
@@ -1604,6 +1827,89 @@
       $("flashPos").textContent = v.pos || "";
       $("flashZh").textContent = v.zh || "";
       $("flashEx").innerHTML = v.ex ? esc(v.ex) + (v.exZh ? '<div class="ex-zh">' + esc(v.exZh) + "</div>" : "") : "";
+    },
+
+    resetCard: function () {
+      const card = $("flashCard");
+      if (!card) return;
+      card.classList.remove("dragging", "swipe-out");
+      card.style.transform = "";
+      card.style.opacity = "";
+      card.querySelectorAll(".fc-stamp").forEach(function (s) { s.classList.remove("on"); });
+    },
+
+    /** 左滑：再记一下（下一个）；右滑：已掌握。动作与下面按钮完全一致。 */
+    slide: function (dir) {
+      const card = $("flashCard");
+      if (!card || this.swiping) return;
+      this.swiping = true;
+      card.classList.add("swipe-out");
+      card.style.transform = "translate(" + (dir * (card.offsetWidth + 120)) + "px,-14px) rotate(" + (dir * 16) + "deg)";
+      card.style.opacity = "0";
+      const self = this;
+      setTimeout(function () {
+        self.swiping = false;
+        self.resetCard();
+        if (dir > 0) self.master();
+        else self.next();
+      }, 240);
+    },
+
+    bindSwipe: function () {
+      if (this.bound) return;
+      const card = $("flashCard");
+      if (!card) return;
+      this.bound = true;
+      const yes = card.querySelector(".fc-yes");
+      const no = card.querySelector(".fc-no");
+      const stamps = function (x) {
+        if (yes) yes.classList.toggle("on", x > 18);
+        if (no) no.classList.toggle("on", x < -18);
+      };
+      let active = false, moved = false, sx = 0, sy = 0, dx = 0, dy = 0;
+      let lastX = 0, lastT = 0, vx = 0;
+
+      card.addEventListener("pointerdown", function (e) {
+        if (e.button !== 0 || Flash.swiping) return;
+        active = true;
+        moved = false;
+        sx = lastX = e.clientX;
+        sy = e.clientY;
+        dx = dy = vx = 0;
+        lastT = e.timeStamp;
+        card.classList.add("dragging");
+        try { card.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+
+      card.addEventListener("pointermove", function (e) {
+        if (!active) return;
+        dx = e.clientX - sx;
+        dy = e.clientY - sy;
+        if (!moved && Math.abs(dx) > 7 && Math.abs(dx) > Math.abs(dy)) moved = true;
+        if (!moved) return;
+        vx = (e.clientX - lastX) / Math.max(1, e.timeStamp - lastT);
+        lastX = e.clientX;
+        lastT = e.timeStamp;
+        card.style.transform = "translate(" + dx + "px," + (dy * 0.18).toFixed(1) + "px) rotate(" + (dx * 0.055).toFixed(2) + "deg)";
+        stamps(dx);
+      });
+
+      const end = function () {
+        if (!active) return;
+        active = false;
+        card.classList.remove("dragging");
+        if (!moved) { stamps(0); return; }
+        Flash.suppressClick = true;
+        setTimeout(function () { Flash.suppressClick = false; }, 420);
+        if (Math.abs(dx) > 90 || Math.abs(vx) > 0.6) {
+          Flash.slide(dx > 0 || (dx === 0 && vx > 0) ? 1 : -1);
+        } else {
+          card.style.transform = "";
+          stamps(0);
+        }
+      };
+      card.addEventListener("pointerup", end);
+      card.addEventListener("pointercancel", end);
     },
 
     flip: function () {
@@ -1837,6 +2143,19 @@
           '<button class="b-act" data-act="speak-text" data-text="' + attr(en) + '">🔊 再听</button>' +
           (zh ? '<button class="b-act" data-act="bubble-zh">译 中文</button>' : "") +
         "</div>";
+      stream.appendChild(div);
+      stream.scrollTop = stream.scrollHeight;
+      return div;
+    },
+
+    /** 首包到达前的“正在思考…”微光占位条 */
+    addThinking: function () {
+      const stream = $("chatStream");
+      const div = document.createElement("div");
+      div.className = "bubble partner think-bubble";
+      div.innerHTML = '<span class="think-spark" aria-hidden="true">' +
+          '<svg viewBox="0 0 24 24"><path d="M12 1.6c.8 5.3 5.1 9.6 10.4 10.4-5.3.8-9.6 5.1-10.4 10.4C11.2 17.1 6.9 12.8 1.6 12 6.9 11.2 11.2 6.9 12 1.6Z"/></svg></span>' +
+        '<span class="think-text">正在思考…</span>';
       stream.appendChild(div);
       stream.scrollTop = stream.scrollHeight;
       return div;
@@ -2168,6 +2487,7 @@
       const lang = opts.lang || (hasChinese(msg) ? "zh" : "en");
       const interrupted = this.interruptedText;
       this.interruptedText = "";
+      Streak.mark();
 
       if (this.mode === "ai") {
         this.sendAI(msg, lang, interrupted);
@@ -2273,6 +2593,24 @@
       const myToken = this.token;
       const p = this.persona();
       const bubble = this.addPartner("…", "");
+      if (bubble) bubble.classList.add("is-draft");
+      const thinkEl = this.addThinking();
+      let revealed = false;
+      const removeThink = function () {
+        if (thinkEl && thinkEl.parentNode) thinkEl.parentNode.removeChild(thinkEl);
+      };
+      const reveal = function () {
+        if (revealed) return;
+        revealed = true;
+        if (thinkEl && thinkEl.parentNode) {
+          thinkEl.classList.add("out");
+          setTimeout(function () { if (thinkEl.parentNode) thinkEl.parentNode.removeChild(thinkEl); }, 240);
+        }
+        if (bubble) {
+          bubble.classList.remove("is-draft");
+          bubble.classList.add("enter");
+        }
+      };
       const enEl = bubble ? bubble.querySelector(".b-en") : null;
       const btnEl = bubble ? bubble.querySelector('[data-act="speak-text"]') : null;
       const streamEl = $("chatStream");
@@ -2326,6 +2664,7 @@
       this.activeStreamId = AI.chatStream(this.aiContext, this.aiHistory, {
         onChunk: function (delta, fullText) {
           if (myToken !== self.token) return;
+          reveal();
           const parsed = parseAIReply(fullText);
           if (enEl) enEl.textContent = parsed.en || "…";
           if (btnEl) btnEl.setAttribute("data-text", parsed.en || "");
@@ -2339,11 +2678,13 @@
           self.busy = false;
           if (!reply) {
             TTS.finishStreamQueue();
+            removeThink();
             if (bubble && bubble.parentNode) bubble.parentNode.removeChild(bubble);
             self.sys("请求未返回内容，请稍后再试。", null);
             if (Ear.on) Ear.relax();
             return;
           }
+          reveal();
           $("chatHintLine").textContent = "提示：回复会自动朗读；用中文问语法和意思也可以。";
           const parsed = parseAIReply(reply);
           if (enEl) enEl.textContent = parsed.en;
@@ -2358,6 +2699,7 @@
           TTS.stop();
           if (myToken !== self.token) return;
           self.busy = false;
+          removeThink();
           if (bubble && bubble.parentNode) bubble.parentNode.removeChild(bubble);
           $("chatHintLine").textContent = "";
           Stage.settle();
@@ -2901,7 +3243,10 @@
       $("btnShowMastered").classList.toggle("on", State.showMastered);
       renderVocab();
     });
-    $("flashCard").addEventListener("click", function () { Flash.flip(); });
+    $("flashCard").addEventListener("click", function () {
+      if (Flash.suppressClick) { Flash.suppressClick = false; return; }
+      Flash.flip();
+    });
     $("flashNext").addEventListener("click", function (e) { e.stopPropagation(); Flash.next(); });
     $("flashPrev").addEventListener("click", function (e) { e.stopPropagation(); Flash.prev(); });
     $("flashSpeak").addEventListener("click", function (e) {
@@ -2997,6 +3342,21 @@
       AI.test();
     });
     $("btnAiClear").addEventListener("click", function () { AI.clear(); fillSettingsForm(); });
+
+    // 分段控件：点完以后让胶囊滑到新位置（等各页面自己的 active 逻辑先跑完）
+    document.addEventListener("click", function (e) {
+      const b = e.target.closest(".seg button, .seg .seg-item");
+      if (!b) return;
+      const seg = b.closest(".seg");
+      if (!seg) return;
+      setTimeout(function () { syncSeg(seg, true); }, 0);
+    });
+    window.addEventListener("resize", function () {
+      requestAnimationFrame(function () { syncAllSegs(); });
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) requestAnimationFrame(function () { syncAllSegs(); });
+    });
   }
 
   /* ========================= 启动 ========================= */
@@ -3025,12 +3385,14 @@
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.2.0";
+      $("aboutVersion").textContent = "版本 1.2.2";
     }
     renderLibrary();
     renderScenarios();
     renderVocab();
+    Streak.render(false);
     Rec.refresh();
+    syncAllSegs(false);
     // 顶部栏滚动阴影
     $("main").addEventListener("scroll", function () {
       const t = $("main").scrollTop;
