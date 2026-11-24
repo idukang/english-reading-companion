@@ -119,12 +119,150 @@
     autoTurn: false
   };
 
+  /* ========================= 多人本地学习档案 =========================
+     每个家人一个档案：已读、生词、自定义文章、完成记录、连续天数各自独立。
+     全部只存在本机 localStorage，不联网、不需要账号。
+     从 v1.2.2 及更早版本覆盖升级时，原来的单套数据会原样搬进「默认档案」，
+     旧键保留不删，任何记录都不会丢。 */
+
+  const PROFILE_EMOJIS = ["🧸", "🎒", "📰", "🌱", "🚀", "🦊"];
+  const PROFILE_MAX = 8;
+
+  const ProfileStore = {
+    KEY: "erc.profiles",
+    store: null,
+    activeId: "",
+
+    load: function () {
+      let s = LS.get(this.KEY, null);
+      const valid = s && Array.isArray(s.list) && s.list.length > 0;
+      if (!valid) {
+        const id = "p" + Date.now().toString(36);
+        let speed = 1.0;
+        const oldSettings = LS.get("erc.settings", null);
+        if (oldSettings && typeof oldSettings === "object" && typeof oldSettings.speed === "number") {
+          speed = oldSettings.speed;
+        }
+        s = {
+          active: id,
+          list: [{ id: id, name: "默认档案", emoji: "🧸", tier: "kids", speed: speed, created: Date.now() }]
+        };
+        // 旧版单套学习数据整体搬进默认档案（原键保留，不删任何记录）
+        ["read", "vocab", "custom", "done"].forEach(function (k) {
+          const v = LS.get("erc." + k, null);
+          if (v !== null && v !== undefined) LS.set("erc.p." + id + "." + k, v);
+        });
+        const streak = LS.get("erc.streak", null);
+        if (streak) LS.set("erc.p." + id + ".streak", streak);
+        LS.set(this.KEY, s);
+      }
+
+      // 兼容早期档案记录，缺什么补什么
+      s.list = s.list.filter(function (p) { return p && typeof p.id === "string" && p.id; });
+      if (!s.list.length) {
+        const id = "p" + Date.now().toString(36);
+        s.list = [{ id: id, name: "默认档案", emoji: "🧸", tier: "kids", speed: 1.0, created: Date.now() }];
+      }
+      s.list.forEach(function (p, i) {
+        p.name = String(p.name || ("档案 " + (i + 1))).slice(0, 16);
+        p.emoji = PROFILE_EMOJIS.indexOf(p.emoji) >= 0 ? p.emoji : PROFILE_EMOJIS[0];
+        p.tier = (p.tier === "teen" || p.tier === "adult") ? p.tier : "kids";
+        p.speed = (typeof p.speed === "number" && p.speed > 0) ? p.speed : 1.0;
+      });
+      if (!s.list.some(function (p) { return p.id === s.active; })) s.active = s.list[0].id;
+
+      this.store = s;
+      this.activeId = s.active;
+      LS.set(this.KEY, s);
+      return s;
+    },
+
+    profile: function () {
+      if (!this.store) this.load();
+      for (let i = 0; i < this.store.list.length; i++) {
+        if (this.store.list[i].id === this.activeId) return this.store.list[i];
+      }
+      return this.store.list[0];
+    },
+
+    dataKey: function (key) {
+      return "erc.p." + this.activeId + "." + key;
+    },
+
+    data: function (key, def) {
+      return LS.get(this.dataKey(key), def);
+    },
+
+    save: function (key, val) {
+      LS.set(this.dataKey(key), val);
+    },
+
+    saveStore: function () {
+      LS.set(this.KEY, this.store);
+    },
+
+    setPref: function (patch) {
+      const p = this.profile();
+      if (!p || !patch) return;
+      if (typeof patch.name === "string" && patch.name.trim()) p.name = patch.name.trim().slice(0, 16);
+      if (PROFILE_EMOJIS.indexOf(patch.emoji) >= 0) p.emoji = patch.emoji;
+      if (patch.tier === "kids" || patch.tier === "teen" || patch.tier === "adult") p.tier = patch.tier;
+      if (typeof patch.speed === "number" && patch.speed > 0) p.speed = patch.speed;
+      this.saveStore();
+      return p;
+    },
+
+    create: function (name, emoji, tier, speed) {
+      if (!this.store) this.load();
+      if (this.store.list.length >= PROFILE_MAX) {
+        toast("最多 " + PROFILE_MAX + " 个档案；不用的档案可以改名继续用");
+        return null;
+      }
+      const id = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      const prof = {
+        id: id,
+        name: String(name || "新档案").trim().slice(0, 16) || "新档案",
+        emoji: PROFILE_EMOJIS.indexOf(emoji) >= 0 ? emoji : "🧸",
+        tier: (tier === "teen" || tier === "adult") ? tier : "kids",
+        speed: (typeof speed === "number" && speed > 0) ? speed : 1.0,
+        created: Date.now()
+      };
+      this.store.list.push(prof);
+      this.saveStore();
+      return prof;
+    },
+
+    switchTo: function (id) {
+      if (!this.store) this.load();
+      if (id === this.activeId) return false;
+      if (!this.store.list.some(function (p) { return p.id === id; })) return false;
+      // 切走前先把当前语速/年龄偏好写回当前档案
+      const cur = this.profile();
+      if (cur) {
+        cur.speed = Number(State.settings.speed) || cur.speed;
+      }
+      this.activeId = id;
+      this.store.active = id;
+      this.saveStore();
+      loadProfileData();
+      applyActiveProfile();
+      return true;
+    }
+  };
+
+  ProfileStore.load();
+
+  function profileArr(key) {
+    const v = ProfileStore.data(key, []);
+    return Array.isArray(v) ? v : [];
+  }
+
   const State = {
     settings: Object.assign({}, DEFAULTS, LS.get("erc.settings", {})),
-    vocab: LS.get("erc.vocab", []),
-    read: LS.get("erc.read", []),
-    custom: LS.get("erc.custom", []),
-    done: LS.get("erc.done", {}),
+    vocab: profileArr("vocab"),
+    read: profileArr("read"),
+    custom: profileArr("custom"),
+    done: ProfileStore.data("done", {}) || {},
     ai: LS.get("erc.ai", null),
     guideDismissed: LS.get("erc.guide", false),
     showMastered: false
@@ -132,20 +270,147 @@
   if (!Array.isArray(State.vocab)) State.vocab = [];
   if (!Array.isArray(State.read)) State.read = [];
   if (!Array.isArray(State.custom)) State.custom = [];
+  if (!State.done || typeof State.done !== "object") State.done = {};
 
-  function saveSettings() { LS.set("erc.settings", State.settings); }
-  function saveVocab() { LS.set("erc.vocab", State.vocab); }
+  function saveSettings() {
+    LS.set("erc.settings", State.settings);
+    if (ProfileStore.store) ProfileStore.setPref({ speed: Number(State.settings.speed) || 1.0 });
+  }
+  function saveVocab() { ProfileStore.save("vocab", State.vocab); }
+  function saveRead() { ProfileStore.save("read", State.read); }
+  function saveCustom() { ProfileStore.save("custom", State.custom); }
+  function saveDone() { ProfileStore.save("done", State.done); }
+
+  /** 切换档案后把 State 换成新档案的数据（各页面随后重绘） */
+  function loadProfileData() {
+    State.read = profileArr("read");
+    State.vocab = profileArr("vocab");
+    State.custom = profileArr("custom");
+    State.done = ProfileStore.data("done", {}) || {};
+    if (!State.done || typeof State.done !== "object") State.done = {};
+    State.vocab.forEach(function (v) { SRS.upgrade(v); });
+    saveVocab();
+    Streak.load();
+  }
+
+  /* ========================= 生词间隔重复（轻量 SRS） =========================
+     每个生词记录 reps / intervalDays / dueAt：
+       · 「再记一下」→ 半小时后再来（当天还会再遇到）
+       · 「记住了」→ 按 1 / 3 / 7 / 15 / 30 / 60 / 120 天逐步拉长
+       · 「标记已掌握」→ 30 天后再复查一次
+     旧版生词没有这些字段，读取时自动补默认值。 */
+
+  const SRS = {
+    LADDER: [1, 3, 7, 15, 30, 60, 120],
+    DAY: 86400000,
+
+    upgrade: function (v) {
+      if (!v || typeof v !== "object") return v;
+      if (typeof v.reps !== "number" || !isFinite(v.reps) || v.reps < 0) v.reps = 0;
+      if (typeof v.intervalDays !== "number" || !isFinite(v.intervalDays) || v.intervalDays < 0) v.intervalDays = 0;
+      if (typeof v.dueAt !== "number" || !isFinite(v.dueAt) || v.dueAt < 0) v.dueAt = 0;
+      if (typeof v.lapses !== "number" || v.lapses < 0) v.lapses = 0;
+      if (typeof v.mastered !== "boolean") v.mastered = false;
+      return v;
+    },
+
+    isDue: function (v) {
+      if (!v || v.mastered) return false;
+      return !v.dueAt || v.dueAt <= Date.now();
+    },
+
+    dueCount: function () {
+      return State.vocab.filter(function (v) { return SRS.isDue(v); }).length;
+    },
+
+    /** 复习结果：remembered=true 记住了；false 再记一下 */
+    review: function (v, remembered) {
+      this.upgrade(v);
+      v.reps = (v.reps || 0) + 1;
+      if (remembered) {
+        let idx = 0;
+        if (v.intervalDays > 0) {
+          for (let i = 0; i < this.LADDER.length; i++) {
+            if (v.intervalDays >= this.LADDER[i]) idx = Math.min(i + 1, this.LADDER.length - 1);
+          }
+        }
+        v.intervalDays = this.LADDER[idx];
+      } else {
+        v.lapses = (v.lapses || 0) + 1;
+        v.intervalDays = 0.02; // 约半小时，当天还会再碰到
+      }
+      v.dueAt = Date.now() + Math.round(v.intervalDays * this.DAY);
+      v.lastAt = Date.now();
+      return v;
+    },
+
+    master: function (v) {
+      this.upgrade(v);
+      v.mastered = true;
+      v.intervalDays = 30;
+      v.dueAt = Date.now() + 30 * this.DAY;
+      v.lastAt = Date.now();
+      return v;
+    },
+
+    /** 复习队列排序：到期的最先，其次没复习过的，再其次还没到期的 */
+    queue: function (list) {
+      const now = Date.now();
+      const rank = function (v) {
+        if (!v.dueAt) return 1;
+        return v.dueAt <= now ? 0 : 2;
+      };
+      return list.slice().sort(function (a, b) {
+        const ra = rank(a), rb = rank(b);
+        if (ra !== rb) return ra - rb;
+        if ((a.dueAt || 0) !== (b.dueAt || 0)) return (a.dueAt || 0) - (b.dueAt || 0);
+        return (a.ts || 0) - (b.ts || 0);
+      });
+    },
+
+    dueText: function (v) {
+      if (!v) return "";
+      if (v.mastered) return "已掌握 · 30 天后复查";
+      if (!v.dueAt) return "新词 · 第一次复习";
+      const left = v.dueAt - Date.now();
+      if (left <= 0) return "今天该复习了";
+      const days = left / this.DAY;
+      if (days < 1) return "约 " + Math.max(1, Math.round(left / 60000)) + " 分钟后再复习";
+      return "约 " + Math.round(days) + " 天后再复习";
+    },
+
+    /** 开聊时挑最多 3 个到期或未掌握的词，交给外教自然复现 */
+    forChat: function (limit) {
+      const n = limit || 3;
+      const pool = State.vocab.filter(function (v) { return !v.mastered; });
+      const sorted = this.queue(pool);
+      return sorted.slice(0, n);
+    }
+  };
+
+  // 旧数据补齐字段（有变化才写回）
+  (function () {
+    let changed = false;
+    State.vocab.forEach(function (v) {
+      const before = v.reps + "/" + v.intervalDays + "/" + v.dueAt + "/" + v.mastered;
+      SRS.upgrade(v);
+      const after = v.reps + "/" + v.intervalDays + "/" + v.dueAt + "/" + v.mastered;
+      if (before !== after) changed = true;
+    });
+    if (changed) saveVocab();
+  })();
 
   /* ========================= 连续学习天数 =========================
      只在 localStorage 里记今天有没有学，不联网、不上报。
      读一篇文章、收一个生词、开始一次对话都算一天。 */
 
   const Streak = {
-    key: "erc.streak",
     data: { last: "", count: 0 },
 
     load: function () {
-      const d = LS.get(this.key, null);
+      // 连续天数跟着学习档案走：换档案就是另一个人的打卡记录
+      this.data = { last: "", count: 0 };
+      const d = ProfileStore.data("streak", null);
       if (d && typeof d === "object" && typeof d.last === "string" && typeof d.count === "number") {
         this.data = { last: d.last, count: Math.max(0, d.count) };
       }
@@ -183,7 +448,7 @@
       }
       const count = this.data.last === this.shiftKey(today, -1) ? (this.data.count || 0) + 1 : 1;
       this.data = { last: today, count: count };
-      LS.set(this.key, this.data);
+      ProfileStore.save("streak", this.data);
       this.render(true);
     },
 
@@ -203,6 +468,140 @@
     }
   };
   Streak.load();
+
+  /* ========================= 学习档案界面 ========================= */
+
+  function profileById(id) {
+    const list = ProfileStore.store ? ProfileStore.store.list : [];
+    for (let i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  function tierName(id) {
+    for (let i = 0; i < TIERS.length; i++) if (TIERS[i].id === id) return TIERS[i].name.replace(/^[^ ]+ /, "");
+    return "少儿启蒙";
+  }
+
+  function activeVal(seg, key) {
+    if (!seg) return "";
+    const b = seg.querySelector(".active");
+    return b ? (b.dataset[key] || "") : "";
+  }
+
+  function pickInSeg(seg, key, value) {
+    if (!seg) return;
+    seg.querySelectorAll("button").forEach(function (b) {
+      b.classList.toggle("active", String(b.dataset[key]) === String(value));
+    });
+    syncSeg(seg, false);
+  }
+
+  function renderProfiles() {
+    const chips = $("profileChips");
+    const list = $("profileList");
+    const cur = ProfileStore.profile();
+    if (chips) {
+      chips.innerHTML = ProfileStore.store.list.map(function (p) {
+        return '<button class="pr-chip' + (p.id === cur.id ? " on" : "") + '" data-act="profile-switch" data-id="' +
+          attr(p.id) + '" title="切换到这个档案">' +
+          '<span class="pr-emoji">' + esc(p.emoji) + "</span>" + esc(p.name) + "</button>";
+      }).join("") +
+        '<button class="pr-chip pr-add" data-act="profile-new" aria-label="新建学习档案" title="新建学习档案">＋</button>';
+    }
+    if (list) {
+      list.innerHTML = ProfileStore.store.list.map(function (p) {
+        const readArr = LS.get("erc.p." + p.id + ".read", []);
+        const wordArr = LS.get("erc.p." + p.id + ".vocab", []);
+        const readN = Array.isArray(readArr) ? readArr.length : 0;
+        const wordN = Array.isArray(wordArr) ? wordArr.length : 0;
+        const active = p.id === cur.id;
+        return '<div class="profile-line' + (active ? " on" : "") + '">' +
+          '<button class="pr-pick" data-act="profile-switch" data-id="' + attr(p.id) + '">' +
+            '<span class="pr-avatar">' + esc(p.emoji) + "</span>" +
+            '<span class="pr-info"><b>' + esc(p.name) + "</b><small>" + esc(tierName(p.tier)) +
+              " · 已读 " + readN + " 篇 · 生词 " + wordN + " 个</small></span>" +
+            (active ? '<span class="pr-now">当前</span>' : "") +
+          "</button>" +
+          '<button class="icon-btn pr-edit" data-act="profile-edit" data-id="' + attr(p.id) + '" aria-label="改名与偏好">✎</button>' +
+        "</div>";
+      }).join("") +
+        '<p class="tiny">每个档案的已读、生词、连续天数完全分开；切换不影响别人，也不需要账号。</p>';
+    }
+  }
+
+  let profileSheetMode = "new";
+  let profileSheetId = "";
+
+  function openProfileSheet(mode, id) {
+    profileSheetMode = mode === "edit" ? "edit" : "new";
+    profileSheetId = id || "";
+    const p = (profileSheetMode === "edit" && profileById(id)) || ProfileStore.profile();
+    $("profileSheetTitle").textContent = profileSheetMode === "edit" ? "修改学习档案" : "新建学习档案";
+    $("pName").value = profileSheetMode === "edit" ? p.name : "";
+    pickInSeg($("pEmojiSeg"), "emoji", p.emoji || "🧸");
+    pickInSeg($("pTierSeg"), "tier", p.tier || "kids");
+    pickInSeg($("pSpeedSeg"), "speed", p.speed || 1.0);
+    $("profileMask").classList.remove("hidden");
+    $("profileSave").textContent = profileSheetMode === "edit" ? "保存修改" : "建好并切换";
+    setTimeout(function () { try { $("pName").focus(); } catch (e) {} }, 140);
+  }
+
+  function closeProfileSheet() {
+    $("profileMask").classList.add("hidden");
+  }
+
+  function saveProfileSheet() {
+    const name = ($("pName").value || "").trim();
+    if (!name) { toast("先给档案起个名字"); return; }
+    const emoji = activeVal($("pEmojiSeg"), "emoji") || "🧸";
+    const tier = activeVal($("pTierSeg"), "tier") || "kids";
+    const speed = Number(activeVal($("pSpeedSeg"), "speed")) || 1.0;
+
+    if (profileSheetMode === "edit") {
+      const p = profileById(profileSheetId);
+      if (!p) return;
+      p.name = name;
+      p.emoji = emoji;
+      p.tier = tier;
+      p.speed = speed;
+      ProfileStore.saveStore();
+      if (p.id === ProfileStore.activeId) applyActiveProfile();
+      else renderProfiles();
+      closeProfileSheet();
+      toast("档案已更新：" + name);
+      return;
+    }
+
+    const prof = ProfileStore.create(name, emoji, tier, speed);
+    if (!prof) return;
+    closeProfileSheet();
+    ProfileStore.switchTo(prof.id);
+    renderProfiles();
+    toast("已新建档案「" + prof.name + "」，从现在开始记在它名下");
+  }
+
+  /** 切换档案后，把界面整体换成新档案的数据与偏好 */
+  function applyActiveProfile() {
+    const p = ProfileStore.profile();
+    currentTier = p.tier || "kids";
+    currentConvTier = p.tier || "kids";
+    if (typeof p.speed === "number" && p.speed > 0) State.settings.speed = p.speed;
+    document.querySelectorAll("#tierSeg .seg-item").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.tier === currentTier);
+    });
+    document.querySelectorAll("#stageTiers .persona-btn").forEach(function (b) {
+      if (b.dataset.tier) b.classList.toggle("on", b.dataset.tier === currentConvTier);
+    });
+    Stage.personaId = currentConvTier;
+    Stage.mount();
+    applySettings();
+    renderProfiles();
+    renderLibrary();
+    renderVocab();
+    renderScenarios();
+    if (currentView === "settings") fillSettingsForm();
+    requestAnimationFrame(function () { syncAllSegs(); });
+  }
 
   /* ========================= 分段控件滑动胶囊 ========================= */
 
@@ -1253,8 +1652,60 @@
     return out;
   }
 
+  /** 离线的“泛词”表：挑关键词时不把 the / is 这类词当生词 */
+  const STOP_WORDS = {
+    the: 1, a: 1, an: 1, and: 1, or: 1, but: 1, if: 1, so: 1, because: 1, as: 1,
+    is: 1, am: 1, are: 1, was: 1, were: 1, be: 1, been: 1, being: 1,
+    do: 1, does: 1, did: 1, have: 1, has: 1, had: 1, will: 1, would: 1, can: 1,
+    could: 1, should: 1, may: 1, might: 1, must: 1, shall: 1,
+    i: 1, you: 1, he: 1, she: 1, it: 1, we: 1, they: 1, me: 1, him: 1, her: 1,
+    us: 1, them: 1, my: 1, your: 1, his: 1, its: 1, our: 1, their: 1,
+    this: 1, that: 1, these: 1, those: 1, there: 1, here: 1, what: 1, which: 1,
+    who: 1, whom: 1, whose: 1, when: 1, where: 1, why: 1, how: 1,
+    in: 1, on: 1, at: 1, to: 1, of: 1, for: 1, with: 1, from: 1, by: 1, about: 1,
+    into: 1, over: 1, after: 1, before: 1, up: 1, down: 1, out: 1, off: 1,
+    not: 1, no: 1, yes: 1, very: 1, too: 1, also: 1, just: 1, only: 1, more: 1,
+    most: 1, some: 1, any: 1, all: 1, each: 1, every: 1, other: 1, another: 1,
+    than: 1, then: 1, now: 1, well: 1, get: 1, got: 1, go: 1, went: 1, say: 1, said: 1,
+    make: 1, made: 1, take: 1, took: 1, come: 1, came: 1, see: 1, saw: 1, like: 1,
+    one: 1, two: 1, first: 1, next: 1, last: 1, new: 1, good: 1, big: 1, small: 1
+  };
+
   function plainSentence(raw) {
     return String(raw).replace(/\[\[|\]\]/g, "");
+  }
+
+  /** 把一句英文渲染成可点击的单词（对话气泡用），生词本里有的词做轻标记 */
+  function wordify(text) {
+    const raw = String(text == null ? "" : text);
+    let out = "";
+    let last = 0;
+    const re = /([A-Za-z]+(?:['’][A-Za-z]+)*)/g;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      out += esc(raw.slice(last, m.index));
+      const saved = isSaved(m[1]) ? " v" : "";
+      out += '<span class="w' + saved + '" data-w="' + attr(m[1]) + '">' + esc(m[1]) + "</span>";
+      last = m.index + m[0].length;
+    }
+    out += esc(raw.slice(last));
+    return out;
+  }
+
+  /** 离线也能做的柔和纠错：只挑最常见、最确定的一个点，给更地道的说法 */
+  function gentleTry(text) {
+    const t = " " + String(text || "").trim() + " ";
+    const low = t.toLowerCase();
+    if (/i am agree/i.test(low)) return "I agree.";
+    if (/i very like/i.test(low)) return "I really like it.";
+    if (/\bi very\b/i.test(low)) return "I really ...";
+    if (/more better/i.test(low)) return "even better";
+    if (/\b(he|she|it) don't\b/i.test(low)) return "He / She doesn't ...";
+    if (/\bhow to say\b/i.test(low)) return "How do you say ... in English?";
+    if (/\bi go\b[^.]*\byesterday\b/i.test(low)) return "I went ... yesterday.";
+    if (/\bvery much like\b/i.test(low)) return "I like it very much.";
+    if (/\bi\b/.test(t)) return "I ...（英文的 I 永远大写）";
+    return "";
   }
 
   /* ========================= 视图切换 ========================= */
@@ -1479,7 +1930,7 @@
       this.item = item;
       if (State.read.indexOf(item.id) === -1) {
         State.read.push(item.id);
-        LS.set("erc.read", State.read);
+        saveRead();
       }
       $("readerTitle").textContent = item.titleZh || item.title;
       $("readerZh").textContent = item.titleZh ? item.title : "";
@@ -1749,7 +2200,12 @@
       ex: entry ? (entry.e || "") : "",
       exZh: entry ? (entry.ez || "") : "",
       ts: Date.now(),
-      mastered: false
+      mastered: false,
+      reps: 0,
+      intervalDays: 0,
+      dueAt: 0,
+      lapses: 0,
+      lastAt: 0
     });
     saveVocab();
     renderLibrary();
@@ -1760,16 +2216,25 @@
   function renderVocab() {
     const list = $("vocabList");
     const wrap = $("flashWrap");
+    const dueBox = $("vocabDue");
     if (!State.vocab.length) {
       wrap.classList.add("hidden");
       list.innerHTML = '<div class="empty">生词本还是空的。<br>读书时点一下不认识的单词，就收进来了。</div>';
       $("vocabCount").textContent = "0";
       $("vocabMastered").textContent = "";
+      if (dueBox) { dueBox.textContent = ""; dueBox.classList.add("hidden"); }
       return;
     }
+    State.vocab.forEach(function (v) { SRS.upgrade(v); });
     const mastered = State.vocab.filter(function (v) { return v.mastered; }).length;
     $("vocabCount").textContent = String(State.vocab.length);
     $("vocabMastered").textContent = "（已掌握 " + mastered + "）";
+    if (dueBox) {
+      const due = SRS.dueCount();
+      dueBox.textContent = due > 0 ? "今天到期 " + due + " 个" : "今天的复习都做完了";
+      dueBox.classList.remove("hidden");
+      dueBox.classList.toggle("hot", due > 0);
+    }
 
     const items = State.vocab.filter(function (v) { return State.showMastered || !v.mastered; });
     if (!items.length) {
@@ -1781,6 +2246,7 @@
         '<div class="v-main">' +
           '<div class="v-word">' + esc(v.w) + (v.ipa ? ' <span class="v-ipa">' + esc(v.ipa) + "</span>" : "") + "</div>" +
           '<div class="v-zh">' + (v.pos ? esc(v.pos) + " " : "") + esc(v.zh) + "</div>" +
+          (v.mastered ? "" : '<div class="v-due' + (SRS.isDue(v) ? " hot" : "") + '">' + esc(SRS.dueText(v)) + "</div>") +
         "</div>" +
         '<button class="icon-btn" data-act="vocab-speak" data-w="' + attr(v.w) + '" aria-label="发音">🔊</button>' +
         '<button class="icon-btn" data-act="vocab-del" data-w="' + attr(v.w) + '" aria-label="删除">🗑</button>' +
@@ -1799,7 +2265,10 @@
     bound: false,
 
     open: function () {
-      this.list = State.vocab.filter(function (v) { return !v.mastered; });
+      const pool = State.vocab.filter(function (v) { return !v.mastered; });
+      pool.forEach(function (v) { SRS.upgrade(v); });
+      // 到期的最先复习，然后是没复习过的，最后是还没到期的
+      this.list = SRS.queue(pool);
       if (!this.list.length) { toast("还没有要复习的生词"); return; }
       this.i = 0;
       this.flipped = false;
@@ -1827,6 +2296,10 @@
       $("flashPos").textContent = v.pos || "";
       $("flashZh").textContent = v.zh || "";
       $("flashEx").innerHTML = v.ex ? esc(v.ex) + (v.exZh ? '<div class="ex-zh">' + esc(v.exZh) + "</div>" : "") : "";
+      if ($("flashMeta")) {
+        $("flashMeta").textContent = "第 " + (v.reps || 0) + " 次复习 · " + SRS.dueText(v);
+        $("flashMeta").classList.toggle("hot", SRS.isDue(v));
+      }
     },
 
     resetCard: function () {
@@ -1838,7 +2311,7 @@
       card.querySelectorAll(".fc-stamp").forEach(function (s) { s.classList.remove("on"); });
     },
 
-    /** 左滑：再记一下（下一个）；右滑：已掌握。动作与下面按钮完全一致。 */
+    /** 左滑：再记一下（半个多小时后再来）；右滑：已掌握。动作与下面按钮完全一致。 */
     slide: function (dir) {
       const card = $("flashCard");
       if (!card || this.swiping) return;
@@ -1851,7 +2324,7 @@
         self.swiping = false;
         self.resetCard();
         if (dir > 0) self.master();
-        else self.next();
+        else self.again();
       }, 240);
     },
 
@@ -1931,11 +2404,33 @@
       this.render();
     },
 
+    /** 再记一下：半小时后再来，卡片留在队列里 */
+    again: function () {
+      const v = this.list[this.i];
+      if (!v) return;
+      SRS.review(v, false);
+      saveVocab();
+      toast("好，半小时后再遇到它");
+      this.next();
+      renderVocab();
+    },
+
+    /** 记住了：下次复习时间往后拉长（1 → 3 → 7 …天） */
+    know: function () {
+      const v = this.list[this.i];
+      if (!v) return;
+      SRS.review(v, true);
+      saveVocab();
+      toast("记住了，" + SRS.dueText(v));
+      this.next();
+      renderVocab();
+    },
+
     master: function () {
       const v = this.list[this.i];
       if (!v) return;
       const target = State.vocab.filter(function (x) { return x.w === v.w; })[0];
-      if (target) target.mastered = true;
+      if (target) SRS.master(target);
       saveVocab();
       this.list.splice(this.i, 1);
       if (!this.list.length) {
@@ -1946,6 +2441,7 @@
       if (this.i >= this.list.length) this.i = 0;
       this.flipped = false;
       this.render();
+      renderVocab();
       toast("已标记为掌握");
     }
   };
@@ -2080,7 +2576,7 @@
       this.finished = false;
       this.msgs = [];
       this.aiHistory = [];
-      this.aiContext = (contextTitle ? "当前阅读材料：" + contextTitle + "\n" + contextText + "\n\n" : "");
+      this.aiContext = (contextTitle ? "当前阅读材料：" + contextTitle + "\n" + contextText + "\n\n" : "") + AI.wordsHint();
       this.fromReader = !!(contextTitle || contextText);
       $("chatTools").classList.remove("hidden");
       $("btnHint").classList.add("hidden");
@@ -2101,6 +2597,152 @@
         return;
       }
       this.sys("已连接你自己的接口：" + AI.currentName() + "。中英文都能聊：说英文练口语，用中文问语法和意思。", null);
+    },
+
+    /** 「🎙️ 问外教这篇」：带着标题、正文开头和当前选中句开聊。
+     *  配了接口就用 BYOK 外教（上下文里带文章），没配就走离线模板，一样能答疑/考词/讨论。 */
+    openReading: function (item, idx) {
+      if (!item) return;
+      this.mode = "reading";
+      preloadAsr();
+      this.token++;
+      this.interruptedText = "";
+      Sf.hide();
+      this.scenario = null;
+      this.step = 0;
+      this.finished = false;
+      this.msgs = [];
+      this.aiHistory = [];
+      this.readerItem = item;
+      this.readerIdx = Math.max(0, parseInt(idx, 10) || 0);
+      const sentences = item.sentences || [];
+      const sel = plainSentence(sentences[this.readerIdx] || "");
+      const selZh = (item.zh && item.zh[this.readerIdx]) ? item.zh[this.readerIdx] : "";
+      const summary = sentences.slice(0, 4).map(plainSentence).join(" ").slice(0, 600);
+      this.readerSel = sel;
+      this.readerSelZh = selZh;
+      this.aiContext = "当前阅读材料：《" + (item.titleZh || item.title) + "》（" + item.title + "）\n" +
+        "正文开头：" + summary + "\n" +
+        "学生当前选中第 " + (this.readerIdx + 1) + " 句：“" + sel + "”" +
+        (selZh ? "（中文：" + selZh + "）" : "") + "\n" +
+        "请围绕这篇材料答疑、考词或讨论内容；学生用中文提问就用简体中文解释。" +
+        AI.wordsHint();
+      this.fromReader = true;
+      $("chatTools").classList.remove("hidden");
+      $("btnHint").classList.remove("hidden");
+      $("btnRestart").classList.remove("hidden");
+      $("chatText").placeholder = "问这句什么意思，或让外教考你单词、聊聊文章";
+      $("btnZhChat").textContent = this.zh ? "中文 ✓" : "译 中文";
+      $("btnZhChat").classList.toggle("on", this.zh);
+      show("chat", "和外教聊这篇", (item.titleZh || item.title) + " · 第 " + (this.readerIdx + 1) + " 句");
+      $("chatStream").innerHTML = "";
+      $("chatHintLine").textContent = AI.configured()
+        ? "已带着标题、正文开头和选中句开聊 · 直接问就行"
+        : "离线外教：这句什么意思 / 考我单词 / 总结这篇，都能答";
+      Live.render();
+
+      const greeting = "Let's talk about this article. Ask me anything about it — or say quiz me.";
+      this.addPartner(greeting, "我们聊聊这篇。可以问“这句什么意思”、让我考你单词，或者说 “quiz me”。");
+      const self = this;
+      this.speakAs(greeting, function () {
+        if (Ear.on) Ear.relax();
+        else Stage.listen();
+      });
+    },
+
+    /** 离线也能用的文章答疑（没配置接口时） */
+    readingTurn: function (msg) {
+      const item = this.readerItem;
+      if (!item) return false;
+      const m = String(msg || "").replace(/\s+/g, " ");
+      const sel = this.readerSel || "";
+      const selZh = this.readerSelZh || "";
+      const wantAdd = /生词本|收藏|记下|加进/.test(m);
+      const wantRead = /读一遍|怎么读|再读|发音|朗读|听一遍|慢一点/.test(m);
+      const wantMean = /什么意思|啥意思|翻译|不懂|不明白|解释|意思/.test(m);
+      const wantQuiz = /考我|考考|提问|问我|测试|quiz|出题/i.test(m);
+      const wantSum = /总结|讲了什么|大意|概括|主要内容|summary/i.test(m);
+      const wantWord = /生词|单词|词汇|关键词|word/i.test(m);
+      const self = this;
+      const after = function () { if (Ear.on) Ear.relax(); else Stage.listen(); };
+
+      this.addMe(msg);
+      $("chatText").value = "";
+      Sf.hide();
+      Streak.mark();
+
+      if (wantAdd) {
+        const words = this.keyWords(sel);
+        let added = 0;
+        words.forEach(function (wd) {
+          if (!isSaved(wd) && dictLookup(wd) && added < 5) {
+            addWord(wd, dictLookup(wd));
+            added++;
+          }
+        });
+        this.sys(added ? "📒 已把这句里的 " + added + " 个词收进生词本，复习卡片里会排队出现。" : "这句里的词已经在生词本里了，点一下词就能再看释义。", null);
+        return true;
+      }
+      if (wantMean) {
+        this.sys("📖 这一句：「" + esc(sel) + "」" + (selZh ? "<br>中文：" + esc(selZh) : "<br>点句子里的单词可以看释义。"), null);
+        this.speakAs(sel, after);
+        return true;
+      }
+      if (wantRead) {
+        this.sys("🔊 好，这一句我再读一遍：", sel);
+        this.speakAs(sel, after);
+        return true;
+      }
+      if (wantQuiz) {
+        const q = (item.qa && item.qa.length) ? item.qa[0] : null;
+        const qText = q ? q.q : "Quick check: can you say the main idea of this sentence in your own words?";
+        this.sys("🧠 考考你：" + esc(qText) + (q && q.qZh ? "<br><span class=\"tiny\">" + esc(q.qZh) + "</span>" : ""), null);
+        this.speakAs(qText, after);
+        return true;
+      }
+      if (wantSum) {
+        const zhAll = (item.zh || []).filter(Boolean).slice(0, 3).join("");
+        this.sys("📝 《" + esc(item.titleZh || item.title) + "》" + (zhAll ? "大意是：" + esc(zhAll) : "讲的是：" + esc(sel)), null);
+        this.speakAs("In short, this article is about " + (item.title || "this topic") + ". What do you think about it?", after);
+        return true;
+      }
+      if (wantWord) {
+        const words = this.keyWords(sel);
+        if (!words.length) {
+          this.sys("这句里没有特别难的词。想背单词的话，可以读书时点一下不认识的词，就收进生词本了。", null);
+          return true;
+        }
+        this.sys("🔍 这句里的关键词（点一下就查、可以收进生词本）：<br>" + words.map(function (wd) {
+          const e = dictLookup(wd);
+          return '<span class="w" data-w="' + attr(wd) + '">' + esc(wd) + "</span>" +
+            (e && e.z ? ' <span class="tiny">' + esc(e.z.split(/[；;]/)[0]) + "</span>" : "");
+        }).join(" · "), null);
+        return true;
+      }
+
+      // 其它：先接住，再追问一句；有把握的地方给 Try saying
+      const ack = pickAck();
+      const reply = ack + " Can you tell me in English what this sentence is about?";
+      const bubble = this.addPartner(reply, "说得好。再用英文说说这句在讲什么？也可以问“这句什么意思”。");
+      const tryText = hasChinese(msg) ? "" : gentleTry(msg);
+      if (tryText) this.tryLine(bubble, tryText);
+      this.speakAs(reply, after);
+      return true;
+    },
+
+    /** 取一句话里最值得学的词（词典里有、长度大于 2、去掉重复） */
+    keyWords: function (text) {
+      const seen = {};
+      const out = [];
+      String(text || "").replace(/[A-Za-z]+(?:['’][A-Za-z]+)*/g, function (m) {
+        const w = m.toLowerCase();
+        if (w.length > 2 && !seen[w] && !STOP_WORDS[w] && dictLookup(w)) {
+          seen[w] = 1;
+          out.push(w);
+        }
+        return m;
+      });
+      return out.slice(0, 8);
     },
 
     closeChat: function () {
@@ -2137,7 +2779,7 @@
       const stream = $("chatStream");
       const div = document.createElement("div");
       div.className = "bubble partner";
-      div.innerHTML = '<div class="b-en">' + esc(en) + "</div>" +
+      div.innerHTML = '<div class="b-en">' + wordify(en) + "</div>" +
         (zh ? '<div class="b-zh' + (this.zh ? "" : " hidden") + '">' + esc(zh) + "</div>" : "") +
         '<div class="b-actions">' +
           '<button class="b-act" data-act="speak-text" data-text="' + attr(en) + '">🔊 再听</button>' +
@@ -2146,6 +2788,25 @@
       stream.appendChild(div);
       stream.scrollTop = stream.scrollHeight;
       return div;
+    },
+
+    /** 气泡下方的柔和纠错条：只展示与朗读，不打断对话 */
+    tryLine: function (bubble, text) {
+      if (!bubble || !text) {
+        return;
+      }
+      const old = bubble.querySelector(".try-line");
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      const bar = document.createElement("div");
+      bar.className = "try-line";
+      bar.innerHTML = '<span class="try-ico" aria-hidden="true">💡</span>' +
+        '<span class="try-body"><b>Try saying</b><span class="try-text"></span></span>' +
+        '<button class="b-act try-speak" data-act="speak-text" aria-label="听这句更自然的说法">🔊</button>';
+      bar.querySelector(".try-text").textContent = text;
+      bar.querySelector(".try-speak").setAttribute("data-text", text);
+      bubble.appendChild(bar);
+      const stream = $("chatStream");
+      if (stream) stream.scrollTop = stream.scrollHeight;
     },
 
     /** 首包到达前的“正在思考…”微光占位条 */
@@ -2165,7 +2826,7 @@
       const stream = $("chatStream");
       const div = document.createElement("div");
       div.className = "bubble me";
-      div.innerHTML = '<div class="b-tag">我</div><div class="b-en">' + esc(text) + "</div>";
+      div.innerHTML = '<div class="b-tag">我</div><div class="b-en">' + wordify(text) + "</div>";
       stream.appendChild(div);
       stream.scrollTop = stream.scrollHeight;
     },
@@ -2271,9 +2932,9 @@
 
     /** 耳机连麦刚打开：把对话接上（没开对话就开一个），说完自动听 */
     startEarSession: function () {
-      if (currentView === "chat" && (this.scenario || this.mode === "ai")) {
-        if (this.mode === "ai") {
-          if (!this.aiHistory.length) {
+      if (currentView === "chat" && (this.scenario || this.mode === "ai" || this.mode === "reading")) {
+        if (this.mode === "ai" || this.mode === "reading") {
+          if (!this.aiHistory.length && this.mode === "ai") {
             this.speakAs("Hi! I'm here. Say anything in English — or ask me in Chinese.", function () { Ear.relax(); });
           } else {
             Ear.relax();
@@ -2346,6 +3007,16 @@
         toast("直接开口说就行，说错了 AI 会提醒你");
         return;
       }
+      if (this.mode === "reading") {
+        const box = document.createElement("div");
+        box.className = "hints";
+        box.innerHTML = ["这句什么意思", "考我单词", "总结这篇", "用英文问我一个问题"].map(function (c) {
+          return '<button class="hint-chip" data-act="use-chip" data-text="' + attr(c) + '">' + esc(c) + "</button>";
+        }).join("");
+        $("chatStream").appendChild(box);
+        $("chatStream").scrollTop = $("chatStream").scrollHeight;
+        return;
+      }
       const t = this.currentTurn();
       if (!t) return;
       const box = document.createElement("div");
@@ -2362,6 +3033,10 @@
       this.token++;
       this.interruptedText = "";
       if (this.mode === "ai") { this.openAI("", ""); return; }
+      if (this.mode === "reading" && this.readerItem) {
+        this.openReading(this.readerItem, this.readerIdx);
+        return;
+      }
       if (this.scenario) this.openScenario(this.scenario);
     },
 
@@ -2453,7 +3128,7 @@
       if (this.finished) return;
       this.finished = true;
       State.done[this.scenario.id] = true;
-      LS.set("erc.done", State.done);
+      saveDone();
       const self = this;
       const token = this.token;
       const closing = this.scenario.closing;
@@ -2491,6 +3166,13 @@
 
       if (this.mode === "ai") {
         this.sendAI(msg, lang, interrupted);
+        return;
+      }
+
+      // 「问外教这篇」：配了接口就走 BYOK（上下文带文章），没配就用离线模板
+      if (this.mode === "reading") {
+        if (AI.configured()) this.sendAI(msg, lang, interrupted);
+        else this.readingTurn(msg);
         return;
       }
 
@@ -2637,7 +3319,7 @@
 
       const flushSentences = function (fullText, isFinal) {
         if (tipCut) return;
-        const tipIdx = fullText.search(/\n\s*(TIP|Tip|tip|提示)\s*[:：]/);
+        const tipIdx = fullText.search(/\n\s*[\[【]?\s*(TIP|Tip|tip|TRY|Try|try|提示)\s*[:：]/);
         const speakableEnd = tipIdx >= 0 ? tipIdx : fullText.length;
         if (tipIdx >= 0) tipCut = true;
         const slice = fullText.slice(spokenOffset, speakableEnd);
@@ -2666,7 +3348,7 @@
           if (myToken !== self.token) return;
           reveal();
           const parsed = parseAIReply(fullText);
-          if (enEl) enEl.textContent = parsed.en || "…";
+          if (enEl) enEl.innerHTML = wordify(parsed.en || "…");
           if (btnEl) btnEl.setAttribute("data-text", parsed.en || "");
           if (streamEl) streamEl.scrollTop = streamEl.scrollHeight;
           $("chatHintLine").textContent = "正在回复并同步朗读…";
@@ -2687,8 +3369,9 @@
           reveal();
           $("chatHintLine").textContent = "提示：回复会自动朗读；用中文问语法和意思也可以。";
           const parsed = parseAIReply(reply);
-          if (enEl) enEl.textContent = parsed.en;
+          if (enEl) enEl.innerHTML = wordify(parsed.en);
           if (btnEl) btnEl.setAttribute("data-text", parsed.en);
+          if (parsed.tryText && bubble) self.tryLine(bubble, parsed.tryText);
           self.aiHistory.push({ role: "assistant", content: reply });
           if (parsed.tip) self.sys("💡 " + parsed.tip, null);
           flushSentences(reply, true);
@@ -2711,21 +3394,25 @@
   };
 
   function parseAIReply(text) {
-    let raw = String(text || "").trim();
+    const raw = String(text || "").trim();
     let tip = "";
+    const tries = [];
     const lines = raw.split(/\n+/);
     const kept = [];
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      if (/^\s*(TIP|Tip|tip|提示)\s*[:：]/.test(l)) {
-        tip = l.replace(/^\s*(TIP|Tip|tip|提示)\s*[:：]\s*/, "");
+      const mTip = l.match(/^\s*(TIP|Tip|tip|提示)\s*[:：]\s*([\s\S]*)$/);
+      const mTry = l.match(/^\s*[\[【]?\s*(TRY|Try|try)\s*[:：]\s*([\s\S]*?)\s*[\]】]?\s*$/);
+      if (mTip) {
+        tip = mTip[2];
+      } else if (mTry) {
+        if (mTry[2]) tries.push(mTry[2]);
       } else {
         kept.push(l);
       }
     }
-    let en = kept.join("\n").trim();
-    if (!en && tip) { en = ""; }
-    return { en: en || raw, tip: tip };
+    const en = kept.join("\n").trim();
+    return { en: en, tip: tip, tryText: tries[0] || "" };
   }
 
   /* ========================= AI 接口 ========================= */
@@ -2757,8 +3444,21 @@
         "2) 如果学生用中文提问（例如“什么意思”“怎么用英语说”“语法解释一下”“帮我纠正”“再说一遍”），就用简体中文清楚解释，给出 1-2 个地道英文例句，最后用一句英文把对话带回英语。" +
         "3) 学生中英文混着说时，顺着他的意思回应，不要说“请说英语”之类的话。" +
         "4) 这是实时语音对话：你随时可能被学生打断。被打断后立刻顺着学生新说的内容接话，不要重复被打断的旧句子，也不要问“我刚才说到哪了”。" +
-        "5) 如果对方有明显的语法或用词错误，先自然接住对方的意思，然后在最后单独一行以“TIP: ”开头，用简体中文指出一个最主要的改进点，并给出更地道的说法；只是聊天时不必每次都纠错。" +
-        "6) 内容健康、适合青少年；不要索要真实姓名、住址、学校等隐私信息。";
+        "5) 如果对方有明显的语法或用词错误，先自然接住对方的意思，然后在最后单独一行以“TIP: ”开头，用简体中文指出一个最主要的改进点。" +
+        "6) 如果对方的表达语法没错但不够地道，可以在最后单独一行以“[TRY: 更自然的英文说法]”的形式给一个更地道的英文句子（一行一个，最多一个）；正文里不要提这件事，也不要打断聊天节奏。没有可改进的就不加这一行。" +
+        "7) 如果提示里给了学生正在学的生词，请在对话里自然地用上 1-2 个，不要罗列或解释。" +
+        "8) 内容健康、适合青少年；不要索要真实姓名、住址、学校等隐私信息。";
+    },
+
+    /** 把到期/未掌握的生词带进开场上下文，让外教自然复现（最多 3 个） */
+    wordsHint: function () {
+      const list = SRS.forChat(3);
+      if (!list.length) return "";
+      return "\n\n学生本机生词本里这几个词还没掌握，请在对话里自然地用上 1-2 个（不要罗列、不要说你在复习）：" +
+        list.map(function (v) {
+          const zh = String(v.zh || "").replace(/（[^）]*）/g, "").slice(0, 16);
+          return v.w + (zh ? "（" + zh + "）" : "");
+        }).join("、") + "。";
     },
 
     buildMessages: function (context, history) {
@@ -2966,7 +3666,7 @@
       qa: []
     };
     State.custom.unshift(item);
-    LS.set("erc.custom", State.custom);
+    saveCustom();
     $("cTitle").value = "";
     $("cText").value = "";
     $("cZh").value = "";
@@ -3007,14 +3707,10 @@
         break;
       }
       case "ask-ai-reading": {
-        if (!AI.configured()) {
-          toast("先到设置里填自己的免费 AI 接口；不填也能用离线问答");
-          switchTab("settings");
-          return;
-        }
         const it = Reader.item;
         if (!it) return;
-        Chat.openAI(it.titleZh || it.title, (it.sentences || []).map(plainSentence).join(" "));
+        Reader.stop();
+        Chat.openReading(it, Reader.activeIdx());
         break;
       }
       case "speak-text": {
@@ -3086,6 +3782,21 @@
         Chat.openAI("", "");
         break;
       }
+      case "profile-switch": {
+        const id = data.id || "";
+        if (ProfileStore.switchTo(id)) {
+          toast("已切换到「" + ProfileStore.profile().name + "」");
+        }
+        break;
+      }
+      case "profile-new": {
+        openProfileSheet("new", "");
+        break;
+      }
+      case "profile-edit": {
+        openProfileSheet("edit", data.id || "");
+        break;
+      }
       case "dismiss-guide": {
         State.guideDismissed = true;
         LS.set("erc.guide", true);
@@ -3100,7 +3811,7 @@
 
   document.addEventListener("click", function (e) {
     const w = e.target.closest(".w");
-    if (w && !e.target.closest("#chatStream")) {
+    if (w) {
       openWord(w.dataset.w);
       return;
     }
@@ -3143,6 +3854,7 @@
       $("tierSeg").querySelectorAll(".seg-item").forEach(function (x) {
         x.classList.toggle("active", x.dataset.tier === currentTier);
       });
+      if (currentTier !== "custom") ProfileStore.setPref({ tier: currentTier });
       renderLibrary();
     });
 
@@ -3160,6 +3872,7 @@
       }
       if (!b.dataset.tier) return;
       currentConvTier = b.dataset.tier;
+      ProfileStore.setPref({ tier: currentConvTier });
       renderScenarios();
       Stage.settle();
     });
@@ -3170,6 +3883,15 @@
       else Reader.playAll();
     });
     $("btnStop").addEventListener("click", function () { Reader.stop(); });
+
+    // 带着这篇文章和当前选中句去问外教
+    if ($("btnAskTutor")) {
+      $("btnAskTutor").addEventListener("click", function () {
+        if (!Reader.item) return;
+        Reader.stop();
+        Chat.openReading(Reader.item, Reader.activeIdx());
+      });
+    }
 
     $("btnSpeed").addEventListener("click", cycleSpeed);
 
@@ -3237,8 +3959,7 @@
     });
 
     // 生词本
-    $("btnReview").addEventListener("click", function () { Flash.open(); });
-    $("btnShowMastered").addEventListener("click", function () {
+    $("btnReview").addEventListener("click", function () { Flash.open(); });    $("btnShowMastered").addEventListener("click", function () {
       State.showMastered = !State.showMastered;
       $("btnShowMastered").classList.toggle("on", State.showMastered);
       renderVocab();
@@ -3249,6 +3970,8 @@
     });
     $("flashNext").addEventListener("click", function (e) { e.stopPropagation(); Flash.next(); });
     $("flashPrev").addEventListener("click", function (e) { e.stopPropagation(); Flash.prev(); });
+    if ($("flashAgain")) $("flashAgain").addEventListener("click", function (e) { e.stopPropagation(); Flash.again(); });
+    if ($("flashKnow")) $("flashKnow").addEventListener("click", function (e) { e.stopPropagation(); Flash.know(); });
     $("flashSpeak").addEventListener("click", function (e) {
       e.stopPropagation();
       const v = Flash.list[Flash.i];
@@ -3343,6 +4066,25 @@
     });
     $("btnAiClear").addEventListener("click", function () { AI.clear(); fillSettingsForm(); });
 
+    // 学习档案弹层
+    if ($("btnProfileNew")) $("btnProfileNew").addEventListener("click", function () { openProfileSheet("new", ""); });
+    if ($("pClose")) $("pClose").addEventListener("click", closeProfileSheet);
+    if ($("pCancel")) $("pCancel").addEventListener("click", closeProfileSheet);
+    if ($("profileSave")) $("profileSave").addEventListener("click", saveProfileSheet);
+    if ($("profileMask")) $("profileMask").addEventListener("click", function (e) {
+      if (e.target === $("profileMask")) closeProfileSheet();
+    });
+    ["pEmojiSeg", "pTierSeg", "pSpeedSeg"].forEach(function (id) {
+      const seg = $(id);
+      if (!seg) return;
+      seg.addEventListener("click", function (e) {
+        const b = e.target.closest("button");
+        if (!b) return;
+        seg.querySelectorAll("button").forEach(function (x) { x.classList.toggle("active", x === b); });
+        setTimeout(function () { syncSeg(seg, true); }, 0);
+      });
+    });
+
     // 分段控件：点完以后让胶囊滑到新位置（等各页面自己的 active 逻辑先跑完）
     document.addEventListener("click", function (e) {
       const b = e.target.closest(".seg button, .seg .seg-item");
@@ -3373,6 +4115,15 @@
   window.App = App;
 
   function boot() {
+    // 先把当前档案的偏好（默认年龄段 / 语速）放进去，再应用设置
+    const activeProfile = ProfileStore.profile();
+    if (activeProfile) {
+      currentTier = activeProfile.tier || currentTier;
+      currentConvTier = activeProfile.tier || currentConvTier;
+      if (typeof activeProfile.speed === "number" && activeProfile.speed > 0) {
+        State.settings.speed = activeProfile.speed;
+      }
+    }
     bind();
     applySettings();
     Stage.personaId = currentConvTier;
@@ -3385,8 +4136,12 @@
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.2.2";
+      $("aboutVersion").textContent = "版本 1.3.0";
     }
+    document.querySelectorAll("#tierSeg .seg-item").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.tier === currentTier);
+    });
+    renderProfiles();
     renderLibrary();
     renderScenarios();
     renderVocab();

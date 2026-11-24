@@ -1757,3 +1757,162 @@ body.in-chat .toast-host { bottom: calc(152px + env(safe-area-inset-bottom)); }
   .toast-item .t-bar i { transform: scaleX(1); }
   #flashCard, .seg > .seg-pill, #sentences .focus-bar, .sent { transition-duration: .01ms !important; }
 }
+
+/* ---------------- v1.3.0：学习档案 / Try saying / 生词到期 ---------------- */
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+.profile-row .pr-label {
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: .6px;
+  white-space: nowrap;
+}
+.pr-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  background: var(--card, rgba(255,255,255,.6));
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease, transform .18s ease, border-color .18s ease;
+}
+.pr-chip .pr-emoji { font-size: 13px; }
+.pr-chip.on {
+  background: var(--accent, #4f7c6a);
+  border-color: var(--accent, #4f7c6a);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12);
+}
+.pr-chip:active { transform: scale(.96); }
+.pr-chip.pr-add {
+  padding: 4px 9px;
+  font-weight: 600;
+  color: var(--accent, #4f7c6a);
+  border-style: dashed;
+}
+
+.profile-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.profile-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 3px 6px 3px 3px;
+  background: var(--card, rgba(255,255,255,.5));
+}
+.profile-line.on { border-color: var(--accent, #4f7c6a); box-shadow: 0 0 0 1px var(--accent, #4f7c6a) inset; }
+.profile-line .pr-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  padding: 7px 4px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+.profile-line .pr-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  background: var(--mark, rgba(0,0,0,.05));
+  flex: none;
+}
+.profile-line .pr-info { display: flex; flex-direction: column; min-width: 0; }
+.profile-line .pr-info b { font-size: 14px; font-weight: 600; }
+.profile-line .pr-info small { font-size: 11.5px; color: var(--text-3); }
+.profile-line .pr-now {
+  font-size: 10.5px;
+  color: var(--accent, #4f7c6a);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-left: auto;
+  flex: none;
+}
+.profile-line .pr-edit { width: 32px; height: 32px; font-size: 14px; }
+
+/* 对话气泡里的 Try saying：柔和、不抢戏 */
+.bubble .try-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--line);
+  font-size: 12.5px;
+  color: var(--text-2);
+  animation: tryIn .26s ease both;
+}
+.bubble .try-line .try-ico { font-size: 13px; flex: none; }
+.bubble .try-line .try-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bubble .try-line b {
+  font-size: 10.5px;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+  color: var(--accent, #4f7c6a);
+  font-weight: 700;
+}
+.bubble .try-line .try-text { font-family: Georgia, "Times New Roman", serif; font-size: 13.5px; }
+.bubble .try-line .try-speak {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  background: var(--mark, rgba(0,0,0,.05));
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+@keyframes tryIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 气泡里已收进生词本的词：淡淡的点线，点开就能查 */
+.bubble .w.v { border-bottom: 1px dotted var(--accent, #4f7c6a); }
+.bubble .w:active { background: var(--mark); }
+
+/* 生词列表的到期提示 */
+.vocab-item .v-due { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+.vocab-item .v-due.hot { color: var(--warm, #d9822b); font-weight: 600; }
+.v-due-total { font-size: 12px; color: var(--text-3); margin-top: 5px; }
+.v-due-total.hot { color: var(--warm, #d9822b); font-weight: 600; }
+
+/* 复习卡片的复习节奏提示 */
+.flash-meta {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 2px 0 10px;
+  min-height: 16px;
+}
+.flash-meta.hot { color: var(--warm, #d9822b); font-weight: 600; }
+
+/* 阅读器里的「🎙️ 问外教这篇」 */
+.chip.ask-chip {
+  border-color: var(--accent, #4f7c6a);
+  color: var(--accent, #4f7c6a);
+  font-weight: 600;
+}
+.chip.ask-chip:active { transform: scale(.97); }

@@ -41,6 +41,10 @@
           </span>
           <span class="stat" id="statOffline">完全离线</span>
         </div>
+        <div class="profile-row" id="profileRow">
+          <span class="pr-label">学习档案</span>
+          <div class="pr-chips" id="profileChips"></div>
+        </div>
       </div>
 
       <div class="section-head">
@@ -91,6 +95,7 @@
           <button class="chip" id="btnAccent">美音</button>
           <button class="chip" id="btnLoop">单句循环</button>
           <button class="chip" id="btnNotes">讲解</button>
+          <button class="chip ask-chip" id="btnAskTutor">🎙️ 问外教这篇</button>
         </div>
       </div>
 
@@ -180,6 +185,7 @@
         <div class="vocab-head-main">
           <div class="vocab-title"><b id="vocabCount">0</b><span>个生词</span><span class="tiny" id="vocabMastered"></span></div>
           <div class="tiny">读书时点过的词都会收进来，随时抽卡复习。</div>
+          <div class="v-due-total hidden" id="vocabDue"></div>
         </div>
         <div class="row vocab-actions">
           <button class="btn primary small" id="btnReview">🃏 卡片复习</button>
@@ -203,10 +209,15 @@
           </div>
         </div>
         <div class="flash-swipe-hint">← 左滑再记一下 · 右滑标记已掌握 →</div>
+        <div class="flash-meta" id="flashMeta"></div>
         <div class="row">
           <button class="btn" id="flashPrev">上一个</button>
           <button class="btn primary grow" id="flashSpeak">🔊 读一遍</button>
           <button class="btn" id="flashNext">下一个</button>
+        </div>
+        <div class="row">
+          <button class="btn ghost grow" id="flashAgain">🔁 再记一下</button>
+          <button class="btn primary grow" id="flashKnow">✅ 记住了</button>
         </div>
         <div class="row">
           <button class="btn ghost grow" id="flashMaster">✔️ 标记已掌握</button>
@@ -217,6 +228,18 @@
 
     <!-- ================= 设置 ================= -->
     <section class="view" id="view-settings">
+      <div class="card" id="profileCard">
+        <div class="card-head">
+          <h3>👨‍👩‍👧 学习档案</h3>
+          <span class="pill ok">本机 · 不用账号</span>
+        </div>
+        <p class="hint">一个人一个档案：已读、生词、连续天数和默认年龄段、语速都分开记。不联网，卸载前都保存在本机。</p>
+        <div class="profile-list" id="profileList"></div>
+        <div class="row wrap">
+          <button class="btn primary small" id="btnProfileNew">＋ 新建档案</button>
+        </div>
+      </div>
+
       <div class="card">
         <h3>学习设置</h3>
 
@@ -422,6 +445,53 @@
 </div>
 
 <div class="toast-host" id="toast" role="status" aria-live="polite" aria-atomic="false"></div>
+
+<!-- 学习档案：新建 / 改名 -->
+<div class="sheet-mask hidden" id="profileMask">
+  <div class="sheet" id="profileSheet">
+    <div class="sheet-grip"></div>
+    <div class="word-head">
+      <h3 id="profileSheetTitle">新建学习档案</h3>
+      <button class="icon-btn" id="pClose" aria-label="关闭">×</button>
+    </div>
+    <div class="field">
+      <div class="field-label">名字</div>
+      <input class="input" id="pName" maxlength="16" placeholder="例如：妹妹 / 爸爸 / 高中英语">
+    </div>
+    <div class="field">
+      <div class="field-label">头像</div>
+      <div class="seg small" id="pEmojiSeg">
+        <button data-emoji="🧸" class="active">🧸</button>
+        <button data-emoji="🎒">🎒</button>
+        <button data-emoji="📰">📰</button>
+        <button data-emoji="🌱">🌱</button>
+        <button data-emoji="🚀">🚀</button>
+        <button data-emoji="🦊">🦊</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-label">默认年龄段</div>
+      <div class="seg small" id="pTierSeg">
+        <button data-tier="kids" class="active">🧸 少儿</button>
+        <button data-tier="teen">🎒 校园</button>
+        <button data-tier="adult">📰 成人</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-label">默认语速</div>
+      <div class="seg small" id="pSpeedSeg">
+        <button data-speed="0.75">0.75x 慢</button>
+        <button data-speed="1" class="active">1.0x</button>
+        <button data-speed="1.2">1.2x 快</button>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="pCancel">取消</button>
+      <button class="btn primary grow" id="profileSave">建好并切换</button>
+    </div>
+    <p class="tiny">档案只保存在这台手机上，不联网、不需要账号；原来的记录会自动归到默认档案。</p>
+  </div>
+</div>
 
 <script src="library.js"></script>
 <script src="dict.js"></script>

@@ -353,6 +353,8 @@ const DICT = {
   "smile":   { i: "/smaɪl/",    p: "n./v.",     z: "微笑", e: "Mom gives me a big smile.", ez: "妈妈冲我大大地笑。" },
   "snow":    { i: "/snəʊ/",     p: "n./v.",     z: "雪；下雪" },
   "so":      { i: "/səʊ/",      p: "conj./adv.", z: "所以；这么；如此", e: "It was late, so I went home.", ez: "太晚了，所以我回家了。" },
+  "spot":    { i: "/spɒt/",     p: "n./v.",     z: "斑点；地点；发现，注意到", e: "I spotted a cat on the wall.", ez: "我在墙上发现了一只猫。" },
+  "story":   { i: "/ˈstɔːri/",  p: "n.",        z: "故事；报道", e: "She told us a funny story.", ez: "她给我们讲了一个有趣的故事。" },
   "some":    { i: "/sʌm/",      p: "adj./pron.", z: "一些" },
   "something": { i: "/ˈsʌmθɪŋ/", p: "pron.",    z: "某事；某物", e: "I want something cold.", ez: "我想要点凉的。" },
   "sorry":   { i: "/ˈsɒri/",    p: "adj.",      z: "抱歉的；难过的", e: "Sorry, I am late.", ez: "抱歉，我迟到了。" },
@@ -651,51 +653,100 @@ const IRREGULAR = {
   "feet": "foot",
   "men": "man",
   "women": "woman",
-  "people": "people"
+  "people": "people",
+  "mice": "mouse",
+  "geese": "goose",
+  "knives": "knife",
+  "wives": "wife",
+  "lives": "life",
+  "wolves": "wolf",
+  "leaves": "leaf",
+  "shelves": "shelf",
+  "halves": "half",
+  "selves": "self",
+  "thieves": "thief",
+  "better": "good",
+  "best": "good",
+  "worse": "bad",
+  "worst": "bad",
+  "further": "far",
+  "farther": "far"
 };
+
+/* 词形还原：把一个词可能对应的原形候选按“最可能”排序返回。
+   只做轻量规则，不下载任何数据；查不到时上层还能走联网词典。 */
+function dictLemmas(rawWord) {
+  const w = String(rawWord || "").toLowerCase().replace(/[’]/g, "'")
+    .replace(/^[^a-z']+|[^a-z']+$/g, "");
+  if (!w) return [];
+  const out = [];
+  const push = function (c) {
+    if (c && c.length > 1 && c !== w && out.indexOf(c) === -1) out.push(c);
+  };
+
+  if (IRREGULAR[w]) push(IRREGULAR[w]);
+
+  // 复数 / 第三人称单数
+  if (/ies$/.test(w)) push(w.slice(0, -3) + "y");
+  if (/(ches|shes|xes|sses|zes|oes)$/.test(w)) push(w.slice(0, -2));
+  if (/ves$/.test(w)) { push(w.slice(0, -3) + "f"); push(w.slice(0, -3) + "fe"); }
+  if (/s$/.test(w) && !/ss$/.test(w)) push(w.slice(0, -1));
+
+  // 现在分词
+  if (/ing$/.test(w)) {
+    const base = w.slice(0, -3);
+    push(base);
+    push(base + "e");
+    if (/([bcdfgklmnprstvz])\1$/.test(base)) push(base.slice(0, -1));
+    if (/ying$/.test(w)) push(w.slice(0, -4) + "ie");
+  }
+
+  // 过去式 / 过去分词
+  if (/ied$/.test(w)) push(w.slice(0, -3) + "y");
+  if (/ed$/.test(w) && !/ied$/.test(w)) {
+    const base = w.slice(0, -2);
+    push(base);
+    push(base + "e");
+    push(w.slice(0, -1));
+    if (/([bcdfgklmnprstvz])\1$/.test(base)) push(base.slice(0, -1));
+  }
+
+  // 比较级 / 最高级
+  if (/ier$/.test(w)) push(w.slice(0, -3) + "y");
+  if (/iest$/.test(w)) push(w.slice(0, -4) + "y");
+  if (/er$/.test(w) && !/ier$/.test(w)) {
+    const b = w.slice(0, -2);
+    push(b);
+    push(b + "e");
+    if (/([bcdfgklmnprstvz])\1$/.test(b)) push(b.slice(0, -1));
+  }
+  if (/est$/.test(w) && !/iest$/.test(w)) {
+    const b = w.slice(0, -3);
+    push(b);
+    push(b + "e");
+    if (/([bcdfgklmnprstvz])\1$/.test(b)) push(b.slice(0, -1));
+  }
+
+  // 副词
+  if (/ily$/.test(w)) push(w.slice(0, -3) + "y");
+  else if (/ly$/.test(w)) push(w.slice(0, -2));
+
+  return out;
+}
 
 /* 返回词条对象，或 null（未收录） */
 function dictLookup(rawWord) {
   if (!rawWord) return null;
-  const w = String(rawWord).toLowerCase().replace(/[’]/g, "'").replace(/^[^a-z']+|[^a-z']+$/g, "");
+  const w = String(rawWord).toLowerCase().replace(/[’]/g, "'")
+    .replace(/^[^a-z']+|[^a-z']+$/g, "");
   if (!w) return null;
   if (DICT[w]) return Object.assign({ head: w, matched: w }, DICT[w]);
 
-  if (IRREGULAR[w] && DICT[IRREGULAR[w]]) {
-    return Object.assign({ head: w, matched: IRREGULAR[w], note: "原形 " + IRREGULAR[w] }, DICT[IRREGULAR[w]]);
-  }
-
-  const cands = [];
-  if (/ies$/.test(w)) cands.push(w.slice(0, -3) + "y");
-  if (/es$/.test(w)) cands.push(w.slice(0, -2));
-  if (/s$/.test(w)) cands.push(w.slice(0, -1));
-  if (/ing$/.test(w)) {
-    const base = w.slice(0, -3);
-    cands.push(base, base + "e");
-    if (/([bcdfgklmnprstvz])\1$/.test(base)) cands.push(base.slice(0, -1));
-  }
-  if (/ed$/.test(w)) {
-    const base = w.slice(0, -2);
-    cands.push(base, base + "e", w.slice(0, -1));
-    if (/([bcdfgklmnprstvz])\1$/.test(base)) cands.push(base.slice(0, -1));
-    if (/ied$/.test(w)) cands.push(w.slice(0, -3) + "y");
-  }
-  if (/er$/.test(w)) {
-    const b = w.slice(0, -2);
-    cands.push(b);
-    if (/([bcdfgklmnprstvz])\1$/.test(b)) cands.push(b.slice(0, -1));
-  }
-  if (/est$/.test(w)) {
-    const b = w.slice(0, -3);
-    cands.push(b);
-    if (/([bcdfgklmnprstvz])\1$/.test(b)) cands.push(b.slice(0, -1));
-  }
-  if (/ly$/.test(w)) cands.push(w.slice(0, -2));
-
+  const cands = dictLemmas(w);
   for (let i = 0; i < cands.length; i++) {
     const c = cands[i];
     if (c && DICT[c]) {
-      return Object.assign({ head: w, matched: c, note: "原形 " + c }, DICT[c]);
+      return Object.assign({ head: w, matched: c, lemma: c, note: "原形 " + c }, DICT[c]);
     }
   }
   return null;

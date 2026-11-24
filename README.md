@@ -4,7 +4,7 @@
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.1.1.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.3.0.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -49,9 +49,10 @@
 
 - 句子里的**每个单词**都可以点
 - 弹出卡片显示：单词、音标、词性、中文释义、例句和例句翻译、发音按钮
-- **内置离线英汉词库**：覆盖书库全部单词 + 高频核心词共 400 余条，并带词形还原（`asked → ask`、`studying → study`、`teeth → tooth`）
+- **内置离线英汉词库**：覆盖书库全部单词 + 高频核心词共 400 余条，并带词形还原（`spotted → spot`、`stories → story`、`studying → study`、`went → go`、`bigger → big`、`teeth → tooth`）
 - 查不到时才有「联网查词」按钮（可选，点一下才会把这个词发给免费词典服务），不点就完全离线
 - **生词本**：一键收藏，卡片复习模式（翻面看释义、朗读、标记已掌握），数据只存在本机
+- **轻量间隔重复**：每个词记录复习次数与下次到期时间；「再记一下」半小时后再来，「记住了」按 1 / 3 / 7 / 15 / 30 天逐步拉长，到期的词自动排到复习队列最前面
 
 ### 4. 💬 对话互动（面对面陪练舞台）
 
@@ -113,10 +114,18 @@
 
 - 接口地址、模型名、API Key 全部只保存在**本机**（应用私有存储），只发送到你填写的那个地址，中途不经任何第三方转发
 - 回复自动朗读；有明显语法或用词问题时，会用一行中文 `TIP:` 指出来
-- 阅读时也可以点「问外教」，把当前这篇文章带进对话里提问
+- **柔和纠错「💡 Try saying」**：表达没错但可以更地道时，回复末尾会附一行更自然的英文，显示在气泡下方；这一行不会被朗读，聊天节奏不被打断
+- **「🎙️ 问外教这篇」**：阅读器里一键带着文章标题、正文开头和当前选中句进入对话，可以问意思、让外教考单词、聊文章内容；没配接口时用内置离线模板，同样能答疑/考词/总结
+- 开聊时会自动挑最多 3 个到期或没掌握的生词放进上下文，让外教在对话里自然带出来复现；气泡里点任意单词都能弹出释义
 - **不填也完全不影响使用**：9 个离线情景 + 读后问答照样能用
 
-### 6. 阅读舒适度
+### 6. 👨‍👩‍👧 多人本地学习档案
+
+- 一个人一个档案：已读篇目、生词本、连续打卡天数、默认年龄段与语速各自独立
+- 首页和设置里都能切换、新建、改名（比如「🧸 妹妹」「🎒 哥哥」「📰 我自己」），头像可选
+- 全部只存在本机，不联网、不需要账号；从旧版覆盖升级时，原来的学习记录会自动归到「默认档案」，一条都不会丢
+
+### 7. 阅读舒适度
 
 - 字号三档：标准 / 大字 / 启蒙巨字
 - 主题三档：日间 / 护眼 / 夜间（状态栏颜色跟着变）
@@ -127,7 +136,7 @@
 
 ## 三、安装方法
 
-1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.1.1.apk`
+1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.3.0.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
 
@@ -150,7 +159,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.1.1`。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.3.0`。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
