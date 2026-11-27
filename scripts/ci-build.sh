@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 英语陪读 —— GitHub Actions 自建构建脚本
+# 青鸟 · 英语陪读 —— GitHub Actions 自建构建脚本
 # 在 ubuntu-latest 上从零准备好 JDK 17 / Android SDK / Gradle 8.7，
 # 下载 SenseVoice + Silero VAD 离线语音模型，以及 Supertonic 离线神经音色模型，
 # 一起打进 assets，生成 Release APK 与校验文件，并按 build.gradle.kts 的版本号发布 Release。
@@ -273,7 +273,7 @@ if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
     exit 1
   fi
   gh release view "v${APP_VERSION}" >/dev/null 2>&1 \
-    || gh release create "v${APP_VERSION}" --title "青鸟 v${APP_VERSION}" --notes-file RELEASE_NOTES.md
+    || gh release create "v${APP_VERSION}" --title "青鸟 · 英语陪读 v${APP_VERSION}" --notes-file RELEASE_NOTES.md
   gh release upload "v${APP_VERSION}" "${APK_OUT}" dist/SHA256SUMS.txt --clobber
   echo "::group::Release"
   gh release view "v${APP_VERSION}" --json url,assets --jq '{url: .url, assets: [.assets[].name]}'

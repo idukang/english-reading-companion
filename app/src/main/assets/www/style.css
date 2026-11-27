@@ -1,5 +1,5 @@
 /* ===========================================================
-   英语陪读 —— 界面样式
+   青鸟 · 英语陪读 —— 界面样式
    暖纸底 + 墨绿主色，正文字号可调，日间 / 护眼 / 夜间三套配色
    交互与动效参考：Lucian UX/UI Prompt（MIT，github.com/Seokwoooo/lucian-uxui-prompt）
    =========================================================== */
@@ -2509,4 +2509,101 @@ body[data-theme="dark"] .cefr-tag.lv-b2 { background: #2c2029; color: #d9aecd; b
 
 @media (prefers-reduced-motion: reduce) {
   .qz-opt.ok, .qz-tile.bad, .qz-match-done { animation: none; }
+}
+
+/* ---------------- 应用内更新 ---------------- */
+
+.tab { position: relative; }
+.tab.has-update::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: calc(50% + 6px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warm);
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.update-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 6px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  animation: ub-in 0.22s ease;
+}
+@keyframes ub-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.ub-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: left;
+  padding: 2px 0;
+}
+.ub-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ub-ico { font-size: 14px; flex: none; }
+.ub-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 17px;
+  line-height: 1;
+}
+
+#updateStatus { margin: 6px 0 10px; }
+#updateStatus.upd-warm { color: var(--warm); }
+#updateStatus.upd-bad { color: var(--warm); }
+
+.upd-notes {
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  border-radius: 13px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.upd-notes-head { font-size: 12.5px; color: var(--text-2); margin-bottom: 6px; }
+.upd-notes-head b { color: var(--accent); }
+.upd-notes-body {
+  margin: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.upd-bar {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  overflow: hidden;
+  margin-top: 10px;
+}
+.upd-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.16s linear;
 }

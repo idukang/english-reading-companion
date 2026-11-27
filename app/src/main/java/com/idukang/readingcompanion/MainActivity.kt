@@ -34,7 +34,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 英语陪读 —— 单 Activity + WebView 外壳。
+ * 青鸟 · 英语陪读 —— 单 Activity + WebView 外壳。
  *
  * 全部界面、书库、词库、对话内容都打包在 app/src/main/assets/www 里，完全离线；
  * Kotlin 这层负责本机能力：
@@ -46,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   5. 状态栏配色
  * 不联网、不上报、无统计 SDK。
  */
-class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Listener {
+class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Listener, AppUpdater.Listener {
 
     companion object {
         private const val REQ_AUDIO = 1001
@@ -149,6 +149,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
 
         webView.addJavascriptInterface(Bridge(), "AndroidBridge")
         webView.loadUrl("file:///android_asset/www/index.html")
+
+        // 应用内更新：清掉上次没装成的包，并把检查/下载结果回传网页
+        AppUpdater.attach(this)
+        AppUpdater.prune(this)
 
         // 离线语音：先挂上监听，并在启动时就把中英两套模型一起热起来。
         // 之前只在进对话页时才载入，用户第一句话常常只有英文识别器在工作，中文会被听成英文。
@@ -973,6 +977,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         emit(js)
     }
 
+    // ---------- 应用内更新回调（AppUpdater.Listener） ----------
+
+    override fun onUpdateCheck(json: String) {
+        emit("window.Native && window.Native.onUpdateCheck && window.Native.onUpdateCheck(" + jsStr(json) + ")")
+    }
+
+    override fun onUpdateProgress(percent: Int, downloaded: Long, total: Long) {
+        emit(
+            "window.Native && window.Native.onUpdateProgress && window.Native.onUpdateProgress(" +
+                percent + "," + downloaded + "," + total + ")"
+        )
+    }
+
+    override fun onUpdateState(state: String, message: String) {
+        emit(
+            "window.Native && window.Native.onUpdateState && window.Native.onUpdateState(" +
+                jsStr(state) + "," + jsStr(message) + ")"
+        )
+    }
+
     private fun emit(js: String) {
         main.post {
             try {
@@ -1024,6 +1048,34 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
 
         @JavascriptInterface
         fun appVersion(): String = com.idukang.readingcompanion.BuildConfig.VERSION_NAME
+
+        @JavascriptInterface
+        fun appVersionName(): String = com.idukang.readingcompanion.BuildConfig.VERSION_NAME
+
+        @JavascriptInterface
+        fun appVersionCode(): Int = com.idukang.readingcompanion.BuildConfig.VERSION_CODE
+
+        // ---------- 应用内更新 ----------
+
+        /** 后台查 GitHub 最新 Release；silent=true 时失败不打扰用户 */
+        @JavascriptInterface
+        fun checkForUpdate(silent: Boolean) {
+            AppUpdater.check(silent)
+        }
+
+        /** 下载并安装：apkUrl / shaUrl 都必须是 GitHub 官方 https 地址 */
+        @JavascriptInterface
+        fun downloadAndInstallUpdate(apkUrl: String, shaUrl: String) {
+            AppUpdater.downloadAndInstall(this@MainActivity, apkUrl, shaUrl)
+        }
+
+        @JavascriptInterface
+        fun canInstallPackages(): Boolean = AppUpdater.canInstall(this@MainActivity)
+
+        @JavascriptInterface
+        fun openInstallPermissionSettings() {
+            AppUpdater.openInstallPermissionSettings(this@MainActivity)
+        }
 
         /** 媒体音量是否为 0（或已静音）：句型闯关的过关提示音据此自动不响 */
         @JavascriptInterface
@@ -1516,6 +1568,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 从「安装未知应用」设置页回来：权限拿到就接着装
+        AppUpdater.resumePendingInstall(this)
+    }
+
     override fun onPause() {
         super.onPause()
         // 耳机后台连麦时，熄屏/切后台不能停朗读和麦克风
@@ -1530,6 +1588,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        AppUpdater.attach(null)
         try {
             if (VoiceCompanionService.isActive) {
                 stopService(Intent(this, VoiceCompanionService::class.java))

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  应用内更新用：把下载到应用私有目录里的 APK 以 content:// 形式交给系统安装器。
+  只开放自己的 updates 目录，不暴露任何其他文件。
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="updates" path="updates/" />
+    <cache-path name="updates_cache" path="updates/" />
+</paths>

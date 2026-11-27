@@ -1,5 +1,5 @@
 /* ===========================================================
-   英语陪读 —— 应用逻辑
+   青鸟 · 英语陪读 —— 应用逻辑
    · 全部内容本地运行，不加载任何外部脚本、不发送统计
    · 与安卓外壳通过 window.AndroidBridge 通信（TTS / 录音 / 语音识别 / 联网）
    · 部分交互与动效参考：Lucian UX/UI Prompt（MIT, github.com/Seokwoooo/lucian-uxui-prompt）
@@ -965,6 +965,20 @@
       neuralVoiceState = state || "idle";
       fillVoiceStatus();
       if (state === "failed") toast("内置神经音色加载失败，已自动用系统语音");
+    },
+
+    /* ---------- 应用内更新（AppUpdater.kt → updater.js） ---------- */
+
+    onUpdateCheck: function (payload) {
+      if (window.Updater) Updater.onCheckResult(payload);
+    },
+
+    onUpdateProgress: function (percent, downloaded, total) {
+      if (window.Updater) Updater.onProgress(percent, downloaded, total);
+    },
+
+    onUpdateState: function (state, message) {
+      if (window.Updater) Updater.onState(state, message);
     }
   };
 
@@ -1771,7 +1785,7 @@
   let currentTab = "library";
 
   const HEADS = {
-    library: ["英语陪读", "全龄段 · 零花费 · 断网可用"],
+    library: ["青鸟 · 英语陪读", "全龄段 · 零花费 · 断网可用"],
     conv: ["对话互动", "9 个真实情景，说完就有中文点评"],
     pattern: ["闯关练习", "句型拼句 · 选词填空 · 英汉配对，全部离线"],
     vocab: ["生词本", "点过的词都收在这里"],
@@ -1837,6 +1851,7 @@
       show("settings");
       setHead(HEADS.settings[0], HEADS.settings[1]);
       fillSettingsForm();
+      if (window.Updater) Updater.render();
     }
   }
 
@@ -5926,10 +5941,13 @@
     // 让原生层的识别语言和上次保存的一致（默认中英自动）
     if (Bridge && Bridge.setAsrLanguage) { try { Bridge.setAsrLanguage(Ear.langMode); } catch (e) {} }
     $("btnShowMastered").classList.toggle("on", State.showMastered);
-    if (Bridge && Bridge.appVersion) {
-      try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
-    } else {
-      $("aboutVersion").textContent = "版本 1.6.0";
+    // 应用内更新：先把界面接好，延迟一下再静默检查，不拖慢开屏、断网也不报错
+    if (window.Updater) {
+      Updater.init({
+        toast: toast,
+        openSettings: function () { switchTab("settings"); }
+      });
+      Updater.autoCheckLater();
     }
     Memory.load();
     Memory.render();

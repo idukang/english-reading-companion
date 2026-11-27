@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Android 13+ 显示常驻通知（不授予也能继续用，只是看不到通知） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 应用内更新：把下载好的新安装包交给系统安装器（Android 8.0+ 需要用户手动允许） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <queries>
         <intent>
@@ -54,6 +56,17 @@
             android:exported="false"
             android:stopWithTask="true"
             android:foregroundServiceType="microphone|mediaPlayback" />
+
+        <!-- 应用内更新：content:// 只读分享刚下载的 APK，仅限 updates 目录 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

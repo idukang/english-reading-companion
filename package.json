@@ -1,10 +1,10 @@
 {
   "name": "english-reading-companion-tests",
   "private": true,
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "英语陪读的 jsdom 自动化测试。只用于开发验证，不参与 APK 构建，App 本身没有任何 npm 依赖。",
   "scripts": {
-    "test": "node --test tests/app.test.js tests/pattern.test.js tests/cefr.test.js tests/quiz.test.js tests/memory.test.js"
+    "test": "node --test tests/app.test.js tests/pattern.test.js tests/cefr.test.js tests/quiz.test.js tests/memory.test.js tests/updater.test.js"
   },
   "devDependencies": {
     "jsdom": "^22.1.0"

@@ -1,10 +1,12 @@
-# 青鸟 · English Reading Companion
+# 青鸟 · 英语陪读
+
+English Reading Companion
 
 一个**全龄段、零花费、零广告、零埋点、断网可用**的英语陪读 Android 应用。
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.6.0.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.6.1.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -176,8 +178,17 @@
 1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.6.0.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
+4. 装过一次之后就不用再来这里了：App 会自己检查新版本，在设置页「关于与更新」里一键下载安装（见下文「应用内更新」）
 
 > 安装包用项目自己的 Release 密钥签名，可以直接安装；如果以前装过 debug 签名或别的签名的版本，先卸载旧版再装。
+
+### 应用内更新（v1.6.1）
+
+- 设置页最下面有「🔄 关于与更新」：显示当前版本、一个「检查更新」按钮，以及「启动时自动检查更新」开关（默认开启）。
+- 有新版时，顶部会出现一条轻量横幅、设置标签上有个小红点，点进去能看到更新说明、下载进度条和「立即下载并安装」。
+- 下载走 GitHub Releases 的官方地址，装之前核对 `SHA256SUMS.txt` 的 SHA-256、包名、版本号和签名证书；全部对上才会把安装包交给系统安装器。
+- Android 8.0 及以上第一次安装时会跳到「安装未知应用」的设置页，允许一次以后就不用再允许（每次更新仍是同一个签名，可以直接覆盖安装，学习记录不丢）。
+- 不检查、不下载也完全不影响使用：断网、飞行模式、放在后台都不影响读和聊。
 
 ### 没有 Google 服务的手机（华为 / 荣耀等）
 
@@ -196,7 +207,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 按 `app/build.gradle.kts` 里的版本号传到对应 Release（当前 `v1.6.0`）。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 按 `app/build.gradle.kts` 里的版本号传到对应 Release（当前 `v1.6.1`）。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
@@ -217,7 +228,7 @@ gradle :app:assembleDebug
 
 ```bash
 npm install    # 只装 jsdom（开发依赖，不进 APK）
-npm test       # 63 个用例：现有功能回归 + 句型闯关 + CEFR 加词 / 选词填空 / 英汉配对 / 记忆本
+npm test       # 80 个用例：现有功能回归 + 句型闯关 + CEFR 加词 / 选词填空 / 英汉配对 / 记忆本 + 应用内更新
 ```
 
 覆盖点见 [`tests/README.md`](tests/README.md)。真机上的听感、收音和触摸手感仍然只能在手机上验收。
@@ -228,9 +239,10 @@ npm test       # 63 个用例：现有功能回归 + 句型闯关 + CEFR 加词 
 
 ```
 app/src/main/
-├── AndroidManifest.xml          # 只申请 INTERNET + RECORD_AUDIO
+├── AndroidManifest.xml          # 权限清单 + FileProvider（应用内更新用）
 ├── java/com/idukang/readingcompanion/
 │   ├── MainActivity.kt          # WebView 外壳 + 中英分段 TTS + 录音 + 语音识别桥 + HTTPS 请求桥
+│   ├── AppUpdater.kt            # 应用内更新：GitHub Release 检查、下载、SHA-256 与签名校验、调起安装器
 │   ├── SherpaEngine.kt          # 离线语音识别（SenseVoiceSmall + Silero VAD，中英混说、可打断）
 │   ├── NeuralTtsEngine.kt       # 离线神经音色（Supertonic）
 │   └── VoiceCompanionService.kt # 耳机后台连麦的前台服务（唤醒锁 / 音频焦点 / 常驻通知）
@@ -239,6 +251,7 @@ app/src/main/
     ├── index.html               # 页面骨架
     ├── style.css                # 三套主题 + 字号体系 + 闯关 / 配对 / 记忆本界面
     ├── app.js                   # 交互逻辑（点读/查词/生词本/对话/AI/闯关/记忆本）
+    ├── updater.js               # 应用内更新的界面与状态（版本比较、更新日志、进度条、自动检查开关）
     ├── library.js               # 分级书库 9 篇 + 讲解 + 读后问答
     ├── challenge.js             # 句型闯关：三关 30 句原创句库 + 拆分/打乱/校验纯函数
     ├── dict.js                  # 离线英汉词库 + 词形还原
@@ -246,8 +259,9 @@ app/src/main/
     └── scenarios.js             # 9 个离线情景对话
 ```
 
-技术栈：Android `Activity` + `WebView` + `JavascriptInterface`，界面用原生 HTML/CSS/JS，连 AndroidX 都没有。
-唯一的第三方依赖是 **Sherpa-ONNX 2.0.3**（Apache-2.0，本地推理、不联网）：
+技术栈：Android `Activity` + `WebView` + `JavascriptInterface`，界面用原生 HTML/CSS/JS。
+AndroidX 只用了一个官方组件 **androidx.core 的 FileProvider**（Apache-2.0），把下载好的安装包以 `content://` 交给系统安装器；
+唯一的第三方原生依赖是 **Sherpa-ONNX 2.0.3**（Apache-2.0，本地推理、不联网）：
 识别用 SenseVoiceSmall int8 + Silero VAD（中英混说、可打断），英文朗读用 Supertonic int8 神经音色
 （模型按 OpenRAIL-M 许可随包分发，许可证与来源说明在 `assets/tts/`）。
 模型都在构建时下载并打进 `assets/`，所以安装包约 265MB。
@@ -263,6 +277,7 @@ app/src/main/
   - `RECORD_AUDIO`：跟读录音、语音回答、离线识别；**语音只在本机用 SenseVoice 转成文字，音频不上传、不保存**
   - `FOREGROUND_SERVICE(_MICROPHONE/_MEDIA_PLAYBACK)` + `WAKE_LOCK`：只在你打开「耳机后台连麦」时使用，熄屏后继续听你说的
   - `POST_NOTIFICATIONS`：显示那条「耳机语音对话中」的通知（Android 13+）；不给也能用，只是看不到通知
+  - `REQUEST_INSTALL_PACKAGES`：只在应用内更新时用来把下载好的新版本交给系统安装器；Android 8.0+ 还要你在系统设置里手动允许一次，不给就只是不能自动安装（可以去 Releases 手动下载）
 - 生词本、已读进度、设置、AI 配置、外教记忆小本本都存在本机应用私有存储里，卸载即清除
 - 句型闯关的进度、正确率和连对同样只存在本机，按学习档案分开；过关提示音在手机本地合成，不需要音频文件或网络
 - 英文朗读用的是随包分发的 Supertonic 神经音色模型（Supertone，OpenRAIL-M），推理全在本机；发送给它朗读的文字不出手机
@@ -290,6 +305,12 @@ A：朗读会走蓝牙耳机（A2DP）没问题。说话时，有线耳机会用
 **Q：能改内容吗？**
 A：可以，`assets/www/library.js`、`challenge.js`、`dict.js`、`scenarios.js` 就是纯数据文件，按同样的格式加文章、加句子、加单词、加情景即可。分级词库 `cefr.js` 由 `scripts/build-cefr.js` 从 openlingo 词表 + `dict.js` 生成，想换词表就改脚本里的补充表再跑一次。
 
+**Q：检查更新失败 / 下载不动？**
+A：检查更新只连 GitHub 的 `api.github.com`，国内网络偶尔会连不上（或者被限流），这时设置页会显示原因，App 其他功能完全不受影响；也可以直接去 Releases 手动下载新版覆盖安装。更新不会丢学习记录、生词本和档案。
+
+**Q：更新时提示「安装包签名不一致」？**
+A：说明下载到的安装包不是本项目签名的（网络劫持或文件损坏）。App 会自动删掉它、不安装，重新点一次「检查更新」再下载即可。
+
 **Q：会不会有一天开始收费或者加广告？**
 A：代码是公开的，谁都可以核对；就算这里变了，你也可以自己编译之前那份。
 
@@ -302,6 +323,7 @@ A：代码是公开的，谁都可以核对；就算这里变了，你也可以�
 - **[pretzelai/openlingo](https://github.com/pretzelai/openlingo)**（MIT）：v1.6.0 的 **CEFR 分级词库**（A1–B2 的等级、词性与词频）、**选词填空 / 英文字卡**的题型思路，以及「外教记忆小本本」的产品灵感来自这个项目。本项目只取其 `words/english.json` 里的等级、词性、词频和英文例句（经 `scripts/build-cefr.js` 精简成约 80KB 的分级词库），没有引入它的 PostHog 埋点、Resend、Cloudflare Turnstile、Postgres / R2 等任何云端或付费依赖；界面、判题逻辑与代码均为本项目自行实现。
 - **[Lucian UX/UI Prompt](https://github.com/Seokwoooo/lucian-uxui-prompt)**（MIT）：语音光球、思考微光、阅读聚焦、滑动胶囊等交互风格（v1.2.2 起）。
 - **[Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx)**（Apache-2.0）与 **SenseVoiceSmall**、**Silero VAD**、**Supertonic** 模型：离线语音识别与英文神经音色。
+- **[AndroidX](https://developer.android.com/jetpack/androidx)**（Apache-2.0）：只用了 `androidx.core` 里的 `FileProvider`，应用内更新时把安装包安全地交给系统安装器。
 
 ## 九、许可
 

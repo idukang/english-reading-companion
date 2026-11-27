@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<title>英语陪读</title>
+<title>青鸟 · 英语陪读</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body data-theme="light" data-font="m">
@@ -14,7 +14,7 @@
   <header class="topbar">
     <button class="icon-btn hidden" id="btnBack" aria-label="返回">‹</button>
     <div class="titles">
-      <h1 id="pageTitle">英语陪读</h1>
+      <h1 id="pageTitle">青鸟 · 英语陪读</h1>
       <p id="pageSub">全龄段 · 零花费 · 断网可用</p>
     </div>
     <div class="top-actions">
@@ -23,6 +23,15 @@
       <button class="chip" id="btnTheme" aria-label="主题">☀</button>
     </div>
   </header>
+
+  <!-- 轻量升级横幅：有新版时才出现，点一下去设置里看更新日志 -->
+  <div class="update-banner hidden" id="updateBanner">
+    <button class="ub-main" id="btnUpdateBanner">
+      <span class="ub-ico" aria-hidden="true">⬆️</span>
+      <span class="ub-text" id="updateBannerText">发现新版本</span>
+    </button>
+    <button class="ub-close" id="btnUpdateClose" aria-label="暂时不要">×</button>
+  </div>
 
   <main id="main">
 
@@ -613,6 +622,40 @@
         <p class="tiny" id="aiStatus"></p>
       </div>
 
+      <div class="card" id="updateCard">
+        <div class="card-head">
+          <h3>🔄 关于与更新</h3>
+          <span class="pill" id="updatePill">本机 · 断网可用</span>
+        </div>
+        <div class="status-row">
+          <span>当前版本</span>
+          <b id="aboutVersion">青鸟 · 英语陪读</b>
+        </div>
+        <p class="tiny" id="updateStatus">检查更新只连接 GitHub 官方接口，不发送任何个人信息；断网时什么也不做。</p>
+
+        <div class="upd-notes hidden" id="updateNotes">
+          <div class="upd-notes-head">新版本 <b id="updateVer"></b> 更新了什么</div>
+          <pre class="upd-notes-body" id="updateNotesBody"></pre>
+          <div class="upd-bar hidden" id="updateBar"><i id="updateFill"></i></div>
+          <div class="row wrap" style="margin-top:8px">
+            <button class="btn primary small" id="btnUpdateInstall">立即下载并安装</button>
+          </div>
+          <p class="tiny" id="updatePct"></p>
+        </div>
+
+        <div class="row wrap">
+          <button class="btn small" id="btnCheckUpdate">检查更新</button>
+        </div>
+
+        <div class="field switch-row">
+          <div>
+            <div class="field-label">启动时自动检查更新</div>
+            <div class="tiny">后台静默检查，有新版才提示；断网或离线时完全不受影响</div>
+          </div>
+          <button class="switch" id="setAutoUpdate" role="switch"></button>
+        </div>
+      </div>
+
       <div class="card">
         <h3>关于与隐私</h3>
         <p>· 不含广告、不含统计埋点、不读取通讯录和短信，只申请麦克风权限（跟读与语音回答时使用）。</p>
@@ -621,7 +664,7 @@
         <p>· 「耳机后台连麦」会在前台放一条通知（这是系统要求，否则熄屏后麦克风会被收回）；点通知上的「结束对话」即可停止。</p>
         <p>· 只有两种情况会联网：你主动点“联网查词”，或你自己配置了 AI 接口并主动发消息。你填的接口地址和密钥只保存在本机，只发送到你填写的那个地址。</p>
         <p>· 生词本、已读进度、学习设置都保存在本机，卸载即清除。</p>
-        <p class="tiny" id="aboutVersion"></p>
+        <p>· 更新只从本项目的 GitHub Releases 下载，安装前会核对 SHA-256 和签名证书；不装更新也照样能用。</p>
       </div>
     </section>
 
@@ -755,6 +798,7 @@
 <script src="challenge.js"></script>
 <script src="quiz.js"></script>
 <script src="memory-book.js"></script>
+<script src="updater.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -11,8 +11,8 @@ android {
         applicationId = "com.idukang.readingcompanion"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.6.0"
+        versionCode = 12
+        versionName = "1.6.1"
 
         // 只打包手机常用的两种架构：x86/x86_64 是模拟器用的，打进来只会让包更大
         ndk {
@@ -69,7 +69,10 @@ android {
 }
 
 dependencies {
-    // 唯一的第三方依赖：Sherpa-ONNX 离线语音（SenseVoiceSmall + Silero VAD 识别，
+    // 官方 FileProvider：应用内更新时以 content:// 形式把 APK 交给系统安装器
+    implementation("androidx.core:core:1.13.1")
+
+    // 唯一的第三方原生依赖：Sherpa-ONNX 离线语音（SenseVoiceSmall + Silero VAD 识别，
     // Supertonic 神经音色合成）。
     // AAR 不进仓库，由 scripts/ci-build.sh（或本地构建）下载到 app/libs/。
     // 本地运行、不联网、不上报；模型文件打包在 assets 里。

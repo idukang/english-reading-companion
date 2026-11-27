@@ -8,7 +8,7 @@ const path = require("path");
 const { JSDOM } = require("jsdom");
 
 const WWW = path.join(__dirname, "..", "app", "src", "main", "assets", "www");
-const SCRIPTS = ["library.js", "dict.js", "cefr.js", "persona.js", "scenarios.js", "challenge.js", "quiz.js", "memory-book.js", "app.js"];
+const SCRIPTS = ["library.js", "dict.js", "cefr.js", "persona.js", "scenarios.js", "challenge.js", "quiz.js", "memory-book.js", "updater.js", "app.js"];
 
 function read(file) {
   return fs.readFileSync(path.join(WWW, file), "utf8");
@@ -76,7 +76,10 @@ function boot(opts) {
     audioContexts: 0,
     oscillators: 0,
     muted: false,
-    stt: []
+    stt: [],
+    updateChecks: [],
+    updateDownloads: [],
+    openedInstallSettings: 0
   };
 
   // 原生桥：朗读只记录，不真的出声；录音同理
@@ -107,7 +110,13 @@ function boot(opts) {
     isVoiceServiceActive: function () { return false; },
     httpRequest: function () {},
     httpStream: function () {},
-    cancelHttp: function () {}
+    cancelHttp: function () {},
+    appVersionName: function () { return "1.5.0-test"; },
+    appVersionCode: function () { return 10; },
+    checkForUpdate: function (silent) { calls.updateChecks.push(!!silent); },
+    downloadAndInstallUpdate: function (apkUrl, shaUrl) { calls.updateDownloads.push({ apkUrl: apkUrl, shaUrl: shaUrl }); },
+    canInstallPackages: function () { return true; },
+    openInstallPermissionSettings: function () { calls.openedInstallSettings++; }
   };
 
   win.AudioContext = makeAudioContext(calls);

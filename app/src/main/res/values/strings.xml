@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">英语陪读</string>
+    <!-- 桌面图标下的名字：统一为「青鸟 · 英语陪读」 -->
+    <string name="app_name">青鸟 · 英语陪读</string>
 </resources>

@@ -230,7 +230,7 @@ class VoiceCompanionService : Service() {
         }
         return builder
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("英语陪读 · 耳机语音对话中")
+            .setContentTitle("青鸟 · 英语陪读 · 耳机语音对话中")
             .setContentText("像打电话一样聊：随时打断，说中文提问也听得懂")
             .setOngoing(true)
             .setShowWhen(false)
