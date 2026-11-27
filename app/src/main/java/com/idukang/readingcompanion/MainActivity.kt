@@ -1025,6 +1025,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener, SherpaEngine.Liste
         @JavascriptInterface
         fun appVersion(): String = com.idukang.readingcompanion.BuildConfig.VERSION_NAME
 
+        /** 媒体音量是否为 0（或已静音）：句型闯关的过关提示音据此自动不响 */
+        @JavascriptInterface
+        fun isMediaMuted(): Boolean {
+            return try {
+                val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                am.isStreamMute(AudioManager.STREAM_MUSIC)
+            } catch (e: Exception) {
+                false
+            }
+        }
+
         @JavascriptInterface
         fun isTtsReady(): Boolean = ttsReady
 

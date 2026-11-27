@@ -4,7 +4,7 @@
 
 书库、词库、情景对话全部打包在安装包里，不需要注册、不需要账号、不需要 Google 服务，也不联网就能读、能点读、能查词、能跟读、能对话。
 
-- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.4.0.apk`
+- 📦 安装包：到 [Releases](https://github.com/idukang/english-reading-companion/releases) 下载 `EnglishReadingCompanion-v1.5.0.apk`
 - 🛠 由 GitHub Actions 自动编译（Gradle + Android SDK 34），每次推送到 `main` 都会重新出包
 - 📱 适用：Android 7.0（API 24）及以上，华为 / 小米 / OPPO / vivo / 荣耀 / 三星等均可安装
 
@@ -93,7 +93,7 @@
 
 对方先用英文说一句（自动朗读），你用**语音**或**键盘**回一句：
 
-- 🎙️ **语音回答**：内置 **Vosk 离线语音识别**（英文 + 中文，不联网、不依赖系统语音服务），识别到的内容直接填进输入框；老机型或没打包模型时会自动退回系统语音
+- 🎙️ **语音回答**：内置 **SenseVoiceSmall + Silero VAD 离线识别**（中英混说，不联网、不依赖系统语音服务），说完自动出整句；老机型或没打包模型时会自动退回系统语音
 - 🛟 **说不出来也不会卡住**：识别不可用时会自动出现一条备用栏——「🎙️ 录音口语对比」+「✅ 我已说完，继续」+ 2–3 个可点就发的示范句，也能直接打字或用输入法的语音键
 - 💡 **提示**：给中文提示 + 两三句可以直接点用的示范说法
 - 回完立刻有**中文点评**：答得好会夸哪里好，答得偏会给出更地道的说法（可点朗读）
@@ -126,7 +126,22 @@
 - 首页和设置里都能切换、新建、改名（比如「🧸 妹妹」「🎒 哥哥」「📰 我自己」），头像可选
 - 全部只存在本机，不联网、不需要账号；从旧版覆盖升级时，原来的学习记录会自动归到「默认档案」，一条都不会丢
 
-### 7. 阅读舒适度
+### 7. 🧩 句型闯关（v1.5.0）
+
+不想只“读”，还想把句子真正变成自己的？句型闯关用**主动回忆**来练：看中文、听发音，把打散的词块按顺序拼回去。
+
+- **入口**：底栏新增「🧩 闯关」，书库首页也有一张入口卡片，点开就到
+- **词块拼句（默认）**：目标句按词拆开、打乱成词块按钮，点一下放进答案区，点答案区的词块退回；支持「清空」和「提示下一词」
+- **听写模式**：想练完整拼写的可以切换，忽略大小写、多余空格和句末标点，写错会逐词标出「漏了 / 多了 / 拼错」
+- **即时反馈**：拼对后用 Web Audio 现场合成轻快的过关音（没有音频文件、不联网；设置里可关，手机媒体音量为 0 时自动不响），整句精讲 + 一键朗读 + 一键跟读 + 点单词加入生词本，并顺滑进入下一句
+- **单句循环 / 盲听模式**：一句话反复听；或遮住中文和词数，只听发音拼句
+- **渐进三关**：Level 1 日常短句、Level 2 生活场景、Level 3 进阶表达，每关 10 句；完成上一关才解锁下一关
+- **和书库打通**：阅读器里点「🧩 抽句闯关」，把当前文章里适合拼的句子直接变成一关
+- **多档案隔离**：关卡进度、正确率、连对都记在当前学习档案名下，只存在本机
+
+句库是 30 句原创英文短句（配中文提示和一句讲解），不引用任何第三方课程或代码。
+
+### 8. 阅读舒适度
 
 - 字号三档：标准 / 大字 / 启蒙巨字
 - 主题三档：日间 / 护眼 / 夜间（状态栏颜色跟着变）
@@ -137,7 +152,7 @@
 
 ## 三、安装方法
 
-1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.4.0.apk`
+1. 打开 [Releases](https://github.com/idukang/english-reading-companion/releases)，下载 `EnglishReadingCompanion-v1.5.0.apk`
 2. 在手机上点开安装；系统提示“未知来源”时，允许浏览器或文件管理器安装应用即可
 3. 首次使用跟读或语音回答时，会申请**麦克风权限**——只用于录音和语音识别，拒绝也不影响阅读和查词
 
@@ -160,7 +175,7 @@
 
 推送到 `main` 即自动编译并发布：`.github/workflows/build-apk.yml` 只有一行 `bash scripts/ci-build.sh`，
 真正的构建逻辑在 [`scripts/ci-build.sh`](scripts/ci-build.sh) 里——它会在 runner 上准备好 JDK 17、Android SDK 34、
-Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.4.0`。
+Gradle 8.7，检测到签名 Secrets 时编译 `assembleRelease`（否则回退 `assembleDebug`），生成 `SHA256SUMS.txt`，然后把 APK 传到 Release `v1.5.0`。
 好处是改构建流程不用动 workflow 文件。也可以到 Actions 页面点 **Run workflow** 手动触发。
 
 ### 本地编译
@@ -175,6 +190,17 @@ gradle :app:assembleDebug
 
 （仓库里带的是 `gradle-wrapper.properties`；如果你本机有 Gradle 8.7，也可以先 `gradle wrapper` 生成 `gradlew` 再 `./gradlew assembleDebug`。）
 
+### 跑自动化测试
+
+界面与闯关逻辑有 jsdom 自动化测试，不需要安卓设备：
+
+```bash
+npm install    # 只装 jsdom（开发依赖，不进 APK）
+npm test       # 34 个用例：现有功能回归 + 句型闯关
+```
+
+覆盖点见 [`tests/README.md`](tests/README.md)。真机上的听感、收音和触摸手感仍然只能在手机上验收。
+
 ---
 
 ## 五、目录结构
@@ -184,14 +210,16 @@ app/src/main/
 ├── AndroidManifest.xml          # 只申请 INTERNET + RECORD_AUDIO
 ├── java/com/idukang/readingcompanion/
 │   ├── MainActivity.kt          # WebView 外壳 + 中英分段 TTS + 录音 + 语音识别桥 + HTTPS 请求桥
-│   ├── VoskEngine.kt            # 离线语音识别（16kHz AudioRecord + AEC + 打断 + 中英双模型）
+│   ├── SherpaEngine.kt          # 离线语音识别（SenseVoiceSmall + Silero VAD，中英混说、可打断）
+│   ├── NeuralTtsEngine.kt       # 离线神经音色（Supertonic）
 │   └── VoiceCompanionService.kt # 耳机后台连麦的前台服务（唤醒锁 / 音频焦点 / 常驻通知）
 ├── res/                         # 主题、颜色、图标
 └── assets/www/                  # 全部界面与内容（离线）
     ├── index.html               # 页面骨架
-    ├── style.css                # 三套主题 + 字号体系
-    ├── app.js                   # 交互逻辑（点读/查词/生词本/对话/AI）
+    ├── style.css                # 三套主题 + 字号体系 + 闯关界面
+    ├── app.js                   # 交互逻辑（点读/查词/生词本/对话/AI/句型闯关）
     ├── library.js               # 分级书库 9 篇 + 讲解 + 读后问答
+    ├── challenge.js             # 句型闯关：三关 30 句原创句库 + 拆分/打乱/校验纯函数
     ├── dict.js                  # 离线英汉词库 + 词形还原
     ├── persona.js               # 三个动画陪练角色（内联 SVG）+ 舞台状态机
     └── scenarios.js             # 9 个离线情景对话
@@ -211,10 +239,11 @@ app/src/main/
 - 不收集任何个人信息，不含统计、广告、崩溃上报 SDK，不读取通讯录、短信、相册、位置
 - 权限都很克制：
   - `INTERNET`：仅用于你主动触发的「联网查词」和你自己配置的 AI 接口
-  - `RECORD_AUDIO`：跟读录音、语音回答、离线识别；**语音只在本机用 Vosk 转成文字，音频不上传、不保存**
+  - `RECORD_AUDIO`：跟读录音、语音回答、离线识别；**语音只在本机用 SenseVoice 转成文字，音频不上传、不保存**
   - `FOREGROUND_SERVICE(_MICROPHONE/_MEDIA_PLAYBACK)` + `WAKE_LOCK`：只在你打开「耳机后台连麦」时使用，熄屏后继续听你说的
   - `POST_NOTIFICATIONS`：显示那条「耳机语音对话中」的通知（Android 13+）；不给也能用，只是看不到通知
 - 生词本、已读进度、设置、AI 配置都存在本机应用私有存储里，卸载即清除
+- 句型闯关的进度、正确率和连对同样只存在本机，按学习档案分开；过关提示音在手机本地合成，不需要音频文件或网络
 - 英文朗读用的是随包分发的 Supertonic 神经音色模型（Supertone，OpenRAIL-M），推理全在本机；发送给它朗读的文字不出手机
 - 应用内所有跳转都被拦截，不能打开外部网页
 
@@ -229,7 +258,7 @@ A：英文默认用内置神经音色，不需要系统语音包；中文解释�
 A：模型在手机本地合成，每句开头有 0.3–1 秒的合成时间（模型越大越明显），播放本身是实时的。第一次开机加载模型大约 1–3 秒，这期间会自动用系统语音顶上。
 
 **Q：语音回答按钮点了没反应？**
-A：v1.1.0 起默认用打包在安装包里的 Vosk 离线识别，不再依赖系统的语音服务，国内 ROM 上也能用。第一次点会花 1–2 秒把模型解包到应用私有目录。如果仍然没反应，对话页会自动出现备用栏（录音对比 / 我已说完，继续 / 示范句），也可以直接打字。
+A：语音识别用打包在安装包里的 SenseVoiceSmall + Silero VAD，不依赖系统的语音服务，国内 ROM 上也能用。如果仍然没反应，对话页会自动出现备用栏（录音对比 / 我已说完，继续 / 示范句），也可以直接打字。
 
 **Q：耳机连麦熄屏后还有效吗？**
 A：有效。它用前台服务 + 部分唤醒锁保持麦克风和朗读，通知栏会一直显示「耳机语音对话中」，点「结束对话」或通知上的叉才会停。注意：按住手机把 App 从最近任务里划掉，对话会结束（这时网页层已经被系统清掉了）。
@@ -238,7 +267,7 @@ A：有效。它用前台服务 + 部分唤醒锁保持麦克风和朗读，通�
 A：朗读会走蓝牙耳机（A2DP）没问题。说话时，有线耳机会用耳机上的麦克风；蓝牙耳机通常只接管“听”，麦克风还是手机的——离手机近一点说就行。
 
 **Q：能改内容吗？**
-A：可以，`assets/www/library.js`、`dict.js`、`scenarios.js` 就是纯数据文件，按同样的格式加文章、加单词、加情景即可。
+A：可以，`assets/www/library.js`、`challenge.js`、`dict.js`、`scenarios.js` 就是纯数据文件，按同样的格式加文章、加句子、加单词、加情景即可。
 
 **Q：会不会有一天开始收费或者加广告？**
 A：代码是公开的，谁都可以核对；就算这里变了，你也可以自己编译之前那份。

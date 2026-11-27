@@ -118,7 +118,9 @@
     notes: true,
     autoTurn: false,
     // 英文音色：neural = 内置离线神经音色（默认），system = 手机自带语音
-    voice: "neural"
+    voice: "neural",
+    // 句型闯关的过关提示音（手机媒体音量为 0 时也会自动静音）
+    sfx: true
   };
 
   /* ========================= 多人本地学习档案 =========================
@@ -289,7 +291,7 @@
   }
   function saveVocab() { ProfileStore.save("vocab", State.vocab); }
   function saveRead() { ProfileStore.save("read", State.read); }
-  function saveCustom() { ProfileStore.save("custom", State.custom); }
+  function saveCustomData() { ProfileStore.save("custom", State.custom); }
   function saveDone() { ProfileStore.save("done", State.done); }
 
   /** 切换档案后把 State 换成新档案的数据（各页面随后重绘） */
@@ -612,6 +614,7 @@
     renderVocab();
     renderScenarios();
     if (currentView === "settings") fillSettingsForm();
+    if (typeof Pattern !== "undefined") Pattern.onProfileChange();
     requestAnimationFrame(function () { syncAllSegs(); });
   }
 
@@ -989,6 +992,23 @@
       try { Bridge.startRecording(); } catch (e) { toast("无法开始录音"); }
     },
 
+    /** 闯关页的「跟读整句」：不属于阅读器，直接读传入的句子 */
+    readAlong: function (text) {
+      const t = String(text || "").trim();
+      if (!t) return;
+      if (!Bridge) { toast("此版本的设备不支持录音"); return; }
+      this.sentence = -1;
+      TTS.stop();
+      const self = this;
+      if (State.settings.autoPlay) {
+        TTS.speak(t, {
+          onEnd: function () { setTimeout(function () { self.beginRecord(); }, 260); }
+        });
+      } else {
+        this.beginRecord();
+      }
+    },
+
     toggle: function () {
       if (this.state === "recording") {
         try { Bridge.stopRecording(); } catch (e) {}
@@ -1009,6 +1029,11 @@
 
     compare: function () {
       if (!this.has) { toast("先说一句，再对比"); return; }
+      // 闯关页的跟读不属于阅读器，没有原句可对比，直接放录音
+      if (this.sentence < 0 || !Reader.item) {
+        try { Bridge.playRecording(); } catch (e) { toast("无法播放录音"); }
+        return;
+      }
       const text = Reader.plain(this.sentence);
       const self = this;
       toast("先听原文，再听你的录音");
@@ -1029,6 +1054,7 @@
       $("btnPlayMine").disabled = !this.has;
       $("btnCompare").disabled = !this.has;
       $("btnDelRec").disabled = !this.has;
+      if (typeof Pattern !== "undefined" && Pattern.active) Pattern.syncMine();
     },
 
     onState: function (state, info) {
@@ -1733,6 +1759,7 @@
     reader: "view-reader",
     conv: "view-conv",
     chat: "view-chat",
+    pattern: "view-pattern",
     vocab: "view-vocab",
     settings: "view-settings"
   };
@@ -1742,6 +1769,7 @@
   const HEADS = {
     library: ["英语陪读", "全龄段 · 零花费 · 断网可用"],
     conv: ["对话互动", "9 个真实情景，说完就有中文点评"],
+    pattern: ["句型闯关", "看中文拼英文 · 词块与听写 · 全部离线"],
     vocab: ["生词本", "点过的词都收在这里"],
     settings: ["设置", "隐私、字号与可选 AI 接口"]
   };
@@ -1758,7 +1786,8 @@
     currentView = view;
     document.body.classList.toggle("in-chat", view === "chat");
     $("main").scrollTop = 0;
-    $("btnBack").classList.toggle("hidden", !(view === "reader" || view === "chat"));
+    const patternPlay = view === "pattern" && typeof Pattern !== "undefined" && Pattern.inPlay;
+    $("btnBack").classList.toggle("hidden", !(view === "reader" || view === "chat" || patternPlay));
     $("shadowBar").classList.toggle("hidden", view !== "reader");
     $(VIEWS.reader).style.paddingBottom = (view === "reader") ? "66px" : "";
     if (headTitle) setHead(headTitle, headSub);
@@ -1774,6 +1803,7 @@
 
   function switchTab(tab) {
     if (!Ear.on) TTS.stop();
+    if (tab !== "pattern" && typeof Pattern !== "undefined") Pattern.pause();
     Rec.state = "idle";
     Stage.settle();
     currentTab = tab;
@@ -1789,6 +1819,10 @@
       setHead(HEADS.conv[0], HEADS.conv[1]);
       renderScenarios();
       preloadAsr();
+    } else if (tab === "pattern") {
+      Pattern.open();
+      show("pattern");
+      setHead(HEADS.pattern[0], HEADS.pattern[1]);
     } else if (tab === "vocab") {
       show("vocab");
       setHead(HEADS.vocab[0], HEADS.vocab[1]);
@@ -1817,6 +1851,7 @@
     document.querySelectorAll("#setVoiceSeg button").forEach(function (b) {
       b.classList.toggle("active", (b.dataset.voice || "neural") === (s.voice === "system" ? "system" : "neural"));
     });
+    if ($("setSfx")) $("setSfx").classList.toggle("on", s.sfx !== false);
     fillVoiceStatus();
     if (Bridge && Bridge.setEnglishVoice) {
       try { Bridge.setEnglishVoice(s.voice === "system" ? "system" : "neural"); } catch (e) {}
@@ -1931,6 +1966,7 @@
     }
     $("setBilingual").classList.toggle("on", !!s.bilingual);
     $("setAutoPlay").classList.toggle("on", !!s.autoPlay);
+    if ($("setSfx")) $("setSfx").classList.toggle("on", s.sfx !== false);
 
     const ai = State.ai || {};
     $("aiProvider").value = ai.provider || "zhipu";
@@ -3742,7 +3778,7 @@
       qa: []
     };
     State.custom.unshift(item);
-    saveCustom();
+    saveCustomData();
     $("cTitle").value = "";
     $("cText").value = "";
     $("cZh").value = "";
@@ -3756,6 +3792,800 @@
     Reader.open(item);
   }
 
+  /* ========================= 句型闯关 =========================
+     玩法：看中文提示 → 听发音 → 把打散的词块按语序拼回去（或写听写）。
+     · 全部离线：句库在 challenge.js，提示音用 Web Audio 现场合成，没有音频文件
+     · 进度 / 正确率 / 连对 / 循环与盲听偏好都按学习档案存本机
+     · 句库与代码 100% 原创，只借鉴“整句主动回忆”的产品思路，不抄任何源码或数据 */
+
+  const Sfx = {
+    ctx: null,
+
+    /** 静音：设置里关掉，或手机媒体音量为 0（由原生桥告知） */
+    muted: function () {
+      if (State.settings.sfx === false) return true;
+      if (Bridge && Bridge.isMediaMuted) {
+        try { if (Bridge.isMediaMuted()) return true; } catch (e) {}
+      }
+      return false;
+    },
+
+    context: function () {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      if (!this.ctx) {
+        try { this.ctx = new AC(); } catch (e) { this.ctx = null; }
+      }
+      return this.ctx;
+    },
+
+    note: function (freq, delay, dur, vol, type) {
+      const ctx = this.context();
+      if (!ctx) return;
+      try {
+        if (ctx.state === "suspended" && ctx.resume) ctx.resume();
+        const t0 = ctx.currentTime + delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type || "sine";
+        osc.frequency.setValueAtTime(freq, t0);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(vol || 0.09, t0 + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.03);
+      } catch (e) {}
+    },
+
+    /** 拼对：三个上行音，轻快但不刺耳 */
+    correct: function () {
+      if (this.muted()) return;
+      this.note(523.25, 0, 0.2, 0.08);
+      this.note(659.25, 0.075, 0.2, 0.08);
+      this.note(783.99, 0.15, 0.28, 0.075);
+    },
+
+    /** 还差一点：两个下行低音 */
+    soft: function () {
+      if (this.muted()) return;
+      this.note(329.63, 0, 0.16, 0.055, "triangle");
+      this.note(261.63, 0.12, 0.22, 0.05, "triangle");
+    },
+
+    /** 本关完成：四个音的小旋律 */
+    level: function () {
+      if (this.muted()) return;
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      for (let i = 0; i < notes.length; i++) this.note(notes[i], i * 0.1, 0.26, 0.075);
+    }
+  };
+
+  const Pattern = {
+    KEY: "patterns",
+    levelId: "",
+    level: null,
+    items: [],
+    idx: 0,
+    mode: "build",
+    loop: false,
+    blind: false,
+    answer: [],
+    pool: [],
+    tokens: [],
+    item: null,
+    solved: false,
+    inPlay: false,
+    isDone: false,
+    active: false,
+    data: null,
+    uid: 0,
+    hintUid: 0,
+    loopTimer: null,
+    autoTimer: null,
+    checkTimer: null,
+    loopGap: 700,
+    nextGap: 4500,
+    continueId: "",
+
+    blank: function () {
+      return {
+        levels: {},
+        stats: { attempts: 0, correct: 0, streak: 0, best: 0 },
+        last: "",
+        mode: "build",
+        loop: false,
+        blind: false
+      };
+    },
+
+    load: function () {
+      const raw = ProfileStore.data(this.KEY, null);
+      const d = this.blank();
+      if (raw && typeof raw === "object") {
+        if (raw.levels && typeof raw.levels === "object") d.levels = raw.levels;
+        if (raw.stats && typeof raw.stats === "object") {
+          d.stats.attempts = Number(raw.stats.attempts) || 0;
+          d.stats.correct = Number(raw.stats.correct) || 0;
+          d.stats.streak = Number(raw.stats.streak) || 0;
+          d.stats.best = Number(raw.stats.best) || 0;
+        }
+        if (typeof raw.last === "string") d.last = raw.last;
+        d.mode = raw.mode === "dictate" ? "dictate" : "build";
+        d.loop = !!raw.loop;
+        d.blind = !!raw.blind;
+      }
+      Object.keys(d.levels).forEach(function (k) {
+        const l = d.levels[k];
+        if (!l || typeof l !== "object") { delete d.levels[k]; return; }
+        if (!Array.isArray(l.done)) l.done = [];
+        l.done = l.done.filter(function (n) { return typeof n === "number" && n >= 0; });
+        l.idx = (typeof l.idx === "number" && l.idx >= 0) ? Math.floor(l.idx) : 0;
+        l.attempts = Number(l.attempts) || 0;
+        l.correct = Number(l.correct) || 0;
+      });
+      this.data = d;
+      return d;
+    },
+
+    save: function () {
+      if (this.data) ProfileStore.save(this.KEY, this.data);
+    },
+
+    lev: function (id) {
+      if (!this.data) this.load();
+      if (!this.data.levels[id]) {
+        this.data.levels[id] = { done: [], idx: 0, attempts: 0, correct: 0 };
+      }
+      return this.data.levels[id];
+    },
+
+    findLevel: function (id) {
+      for (let i = 0; i < CHALLENGE_LEVELS.length; i++) {
+        if (CHALLENGE_LEVELS[i].id === id) return CHALLENGE_LEVELS[i];
+      }
+      return null;
+    },
+
+    isLevelComplete: function (id) {
+      const lv = this.findLevel(id);
+      if (!lv) return false;
+      return this.lev(id).done.length >= lv.sentences.length;
+    },
+
+    isLocked: function (id) {
+      for (let i = 1; i < CHALLENGE_LEVELS.length; i++) {
+        if (CHALLENGE_LEVELS[i].id === id) return !this.isLevelComplete(CHALLENGE_LEVELS[i - 1].id);
+      }
+      return false;
+    },
+
+    accuracy: function () {
+      const d = this.data || this.load();
+      return d.stats.attempts ? Math.round(d.stats.correct * 100 / d.stats.attempts) : 0;
+    },
+
+    /* ---------------- 首页 ---------------- */
+
+    open: function () {
+      this.active = true;
+      this.load();
+      if (this.inPlay && this.level) {
+        $("pzHome").classList.add("hidden");
+        $("pzPlay").classList.remove("hidden");
+        $("pzDone").classList.toggle("hidden", !this.isDone);
+        $("pzCard").classList.toggle("hidden", !!this.isDone);
+        return;
+      }
+      this.inPlay = false;
+      $("pzHome").classList.remove("hidden");
+      $("pzPlay").classList.add("hidden");
+      this.renderHome();
+    },
+
+    renderHome: function () {
+      const self = this;
+      const d = this.load();
+      const acc = this.accuracy();
+      $("pzStats").innerHTML =
+        '<span class="pz-stat">🔥 当前连对 <b>' + d.stats.streak + '</b></span>' +
+        '<span class="pz-stat">正确率 <b>' + acc + '%</b></span>' +
+        '<span class="pz-stat">最长连对 <b>' + d.stats.best + '</b></span>';
+
+      let nextId = "";
+      const cards = CHALLENGE_LEVELS.map(function (lv) {
+        const rec = self.lev(lv.id);
+        const total = lv.sentences.length;
+        const done = Math.min(rec.done.length, total);
+        const locked = self.isLocked(lv.id);
+        const complete = done >= total;
+        if (!locked && !complete && !nextId) nextId = lv.id;
+        return '<button class="pz-level' + (locked ? " is-locked" : " is-open") + '" data-pz="level" data-id="' + attr(lv.id) + '"' +
+          (locked ? ' aria-disabled="true"' : '') + '>' +
+          '<span class="pz-level-emoji" aria-hidden="true">' + lv.emoji + '</span>' +
+          '<span class="pz-level-main">' +
+            '<span class="pz-level-name">' + esc(lv.name) + '</span>' +
+            '<span class="pz-level-sub">' + esc(lv.sub) + ' · 共 ' + total + ' 句</span>' +
+            '<span class="pz-level-prog"><i style="width:' + Math.round(done * 100 / total) + '%"></i></span>' +
+          '</span>' +
+          '<span class="pz-level-side">' +
+            (locked
+              ? '🔒<b>先完成上一关</b>'
+              : (complete
+                ? '<b class="pz-level-done">✓ 已完成</b>' + done + "/" + total
+                : '<b>' + done + "/" + total + '</b>' + (rec.idx > 0 ? "进行中" : "未开始"))) +
+          '</span>' +
+        '</button>';
+      });
+      $("pzLevels").innerHTML = cards.join("");
+
+      if (nextId) {
+        this.continueId = nextId;
+      } else {
+        const last = this.findLevel(d.last);
+        this.continueId = last ? last.id : CHALLENGE_LEVELS[0].id;
+      }
+      $("btnPzContinue").textContent = nextId ? "▶ 接着闯" : "▶ 再练一遍";
+    },
+
+    /* ---------------- 进入关卡 ---------------- */
+
+    startLevel: function (id) {
+      const lv = this.findLevel(id);
+      if (!lv) return;
+      if (this.isLocked(id)) { toast("先完成上一关，再闯这一关"); return; }
+      this.levelId = id;
+      this.level = { id: id, name: lv.name, emoji: lv.emoji, sub: lv.sub, isArticle: false };
+      this.items = lv.sentences.map(function (s) {
+        return { en: s.en, zh: s.zh, hint: s.hint, tag: s.tag };
+      });
+      const rec = this.lev(id);
+      this.idx = (rec.idx >= 0 && rec.idx < this.items.length) ? rec.idx : 0;
+      this.inPlay = true;
+      this.isDone = false;
+      this.enter();
+    },
+
+    startFromArticle: function (item) {
+      const sents = PatternCore.pickFromArticle(item, 12);
+      if (sents.length < 3) {
+        toast("这篇文章里适合拼句的句子不到 3 句，换一篇试试");
+        return;
+      }
+      this.levelId = "art:" + item.id;
+      this.level = {
+        id: this.levelId,
+        name: "文章闯关",
+        emoji: "📖",
+        sub: item.titleZh || item.title || "自定义文章",
+        isArticle: true
+      };
+      this.items = sents;
+      this.idx = 0;
+      this.inPlay = true;
+      this.isDone = false;
+      this.enter();
+      toast("从这篇文章抽出 " + sents.length + " 句来闯关");
+    },
+
+    startLastArticle: function () {
+      let item = Reader.item;
+      for (let i = State.read.length - 1; i >= 0 && !item; i--) item = findItem(State.read[i]);
+      if (!item) {
+        toast("先去书库读一篇文章，再从里面抽句闯关");
+        switchTab("library");
+        return;
+      }
+      this.startFromArticle(item);
+    },
+
+    enter: function () {
+      this.active = true;
+      this.data = this.load();
+      this.loop = !!this.data.loop;
+      this.blind = !!this.data.blind;
+      this.mode = this.data.mode === "dictate" ? "dictate" : "build";
+      $("pzHome").classList.add("hidden");
+      $("pzPlay").classList.remove("hidden");
+      $("pzDone").classList.add("hidden");
+      $("pzCard").classList.remove("hidden");
+      if (currentView === "pattern") $("btnBack").classList.remove("hidden");
+      this.newSentence();
+    },
+
+    /* ---------------- 一句一句来 ---------------- */
+
+    newSentence: function () {
+      this.cancelTimers();
+      if (this.idx >= this.items.length) { this.finish(); return; }
+      const self = this;
+      this.item = this.items[this.idx];
+      this.solved = false;
+      this.isDone = false;
+      this.answer = [];
+      this.hintUid = 0;
+      this.tokens = PatternCore.tokenize(this.item.en);
+      this.pool = PatternCore.shuffle(this.tokens.map(function (text) {
+        self.uid++;
+        return { uid: self.uid, text: text };
+      }));
+      $("pzDone").classList.add("hidden");
+      $("pzCard").classList.remove("hidden", "shake");
+      $("pzFeedback").classList.add("hidden");
+      $("pzFeedback").innerHTML = "";
+      $("pzInput").value = "";
+      $("pzHintLine").textContent = this.blind
+        ? "盲听模式：先听一遍发音，再凭记忆拼出整句。"
+        : "拼对以后，点整句里的任意单词可以查词、收进生词本。";
+      this.renderTop();
+      this.renderPrompt();
+      this.renderMode();
+      this.renderAnswer();
+      if (this.blind || this.loop) this.speak();
+    },
+
+    renderTop: function () {
+      if (!this.level) return;
+      $("pzLevelName").textContent = this.level.emoji + " " + this.level.name;
+      $("pzProgress").textContent = "第 " + Math.min(this.idx + 1, this.items.length) + " / " + this.items.length + " 句" +
+        (this.level.sub ? " · " + this.level.sub : "");
+      $("pzStreak").textContent = "🔥 " + (this.data ? this.data.stats.streak : 0);
+      $("pzBar").style.width = Math.round(this.idx * 100 / Math.max(1, this.items.length)) + "%";
+    },
+
+    renderPrompt: function () {
+      const it = this.item;
+      if (!it) return;
+      const zh = $("pzZh");
+      if (this.blind) {
+        zh.textContent = "盲听模式：先听发音，再凭记忆拼出这句话";
+        zh.classList.add("is-blind");
+      } else {
+        zh.textContent = it.zh || "这篇文章没有中文译文，听懂意思后把它拼出来";
+        zh.classList.remove("is-blind");
+      }
+      const loopBtn = $("pzLoopBtn");
+      loopBtn.classList.toggle("on", this.loop);
+      loopBtn.setAttribute("aria-pressed", this.loop ? "true" : "false");
+      const blindBtn = $("pzBlindBtn");
+      blindBtn.classList.toggle("on", this.blind);
+      blindBtn.setAttribute("aria-pressed", this.blind ? "true" : "false");
+      $("pzCount").innerHTML =
+        (it.tag ? '<span class="pz-tag">' + esc(it.tag) + '</span>' : "") +
+        "<span>" + (this.blind ? "盲听中 · 词数已隐藏" : this.tokens.length + " 个词块") + "</span>";
+    },
+
+    renderMode: function () {
+      const build = this.mode !== "dictate";
+      $("pzBuild").classList.toggle("hidden", !build);
+      $("pzDictate").classList.toggle("hidden", build);
+      document.querySelectorAll("#pzModeSeg button").forEach(function (b) {
+        b.classList.toggle("active", b.dataset.mode === (build ? "build" : "dictate"));
+      });
+    },
+
+    renderAnswer: function () {
+      const self = this;
+      const chip = function (c, inAns) {
+        return '<button class="pz-chunk' + (inAns ? " in-ans" : "") +
+          (self.hintUid === c.uid ? " hint" : "") + '" data-pz="chunk" data-side="' +
+          (inAns ? "answer" : "pool") + '" data-uid="' + c.uid + '">' + esc(c.text) + "</button>";
+      };
+      const ans = $("pzAnswer");
+      ans.classList.toggle("has-items", this.answer.length > 0);
+      ans.classList.toggle("ok", this.solved);
+      ans.innerHTML = this.answer.length
+        ? this.answer.map(function (c) { return chip(c, true); }).join("")
+        : '<span class="pz-ph">点下面的词块，按顺序拼成一句话</span>';
+      $("pzPool").innerHTML = this.pool.map(function (c) { return chip(c, false); }).join("");
+    },
+
+    place: function (uid) {
+      if (this.solved) return;
+      let i = -1;
+      for (let k = 0; k < this.pool.length; k++) if (this.pool[k].uid === uid) { i = k; break; }
+      if (i < 0) return;
+      this.answer.push(this.pool.splice(i, 1)[0]);
+      this.hintUid = 0;
+      this.hideFeedback();
+      this.renderAnswer();
+      if (this.answer.length === this.tokens.length) {
+        const self = this;
+        clearTimeout(this.checkTimer);
+        this.checkTimer = setTimeout(function () { self.checkBuild(); }, 180);
+      }
+    },
+
+    unplace: function (uid) {
+      if (this.solved) return;
+      let i = -1;
+      for (let k = 0; k < this.answer.length; k++) if (this.answer[k].uid === uid) { i = k; break; }
+      if (i < 0) return;
+      this.pool.push(this.answer.splice(i, 1)[0]);
+      this.hintUid = 0;
+      clearTimeout(this.checkTimer);
+      this.hideFeedback();
+      this.renderAnswer();
+    },
+
+    clearAnswer: function () {
+      if (this.solved) return;
+      const self = this;
+      this.answer.forEach(function (c) { self.pool.push(c); });
+      this.answer = [];
+      this.hintUid = 0;
+      clearTimeout(this.checkTimer);
+      this.hideFeedback();
+      this.renderAnswer();
+    },
+
+    hideFeedback: function () {
+      if (this.solved) return;
+      this.cancelAuto();
+      $("pzFeedback").classList.add("hidden");
+      $("pzFeedback").innerHTML = "";
+    },
+
+    hint: function () {
+      if (this.solved || !this.item) return;
+      if (this.mode === "dictate") { this.dictHint(); return; }
+      const next = PatternCore.nextWord(this.answer.map(function (c) { return c.text; }), this.tokens);
+      if (!next) { toast("词块已经拼满了，检查一下顺序"); return; }
+      const core = PatternCore.core(next);
+      this.hintUid = 0;
+      for (let i = 0; i < this.pool.length; i++) {
+        if (PatternCore.core(this.pool[i].text) === core) { this.hintUid = this.pool[i].uid; break; }
+      }
+      this.renderAnswer();
+      $("pzHintLine").textContent = "下一个词： " + next;
+    },
+
+    dictHint: function () {
+      if (this.solved || !this.item) return;
+      const w = PatternCore.dictationHint($("pzInput").value, this.item.en);
+      $("pzHintLine").textContent = w ? "下一个该写的词是：“" + w + "”" : "词都写上了，检查一下拼写和顺序。";
+    },
+
+    /* ---------------- 朗读与开关 ---------------- */
+
+    speak: function () {
+      if (!this.item) return;
+      this.cancelLoop();
+      const self = this;
+      const btn = $("pzSpeak");
+      btn.classList.add("is-playing");
+      TTS.speak(this.item.en, {
+        onEnd: function () {
+          btn.classList.remove("is-playing");
+          if (self.loop && self.inPlay) {
+            self.loopTimer = setTimeout(function () { self.speak(); }, self.loopGap);
+          }
+        },
+        onError: function () { btn.classList.remove("is-playing"); }
+      });
+    },
+
+    cancelLoop: function () {
+      clearTimeout(this.loopTimer);
+      this.loopTimer = null;
+    },
+
+    toggleLoop: function () {
+      this.loop = !this.loop;
+      if (this.data) { this.data.loop = this.loop; this.save(); }
+      this.renderPrompt();
+      if (this.loop) this.speak();
+      else this.cancelLoop();
+      toast(this.loop ? "单句循环已打开，会一直重复这句" : "单句循环已关闭");
+    },
+
+    toggleBlind: function () {
+      this.blind = !this.blind;
+      if (this.data) { this.data.blind = this.blind; this.save(); }
+      this.renderPrompt();
+      $("pzHintLine").textContent = this.blind
+        ? "盲听模式：先听一遍发音，再凭记忆拼出整句。"
+        : "拼对以后，点整句里的任意单词可以查词、收进生词本。";
+      if (this.blind) this.speak();
+      toast(this.blind ? "盲听模式：中文和词数已隐藏" : "已显示中文提示");
+    },
+
+    setMode: function (mode) {
+      if (this.solved) { toast("这句已经拼对了，下一句再换模式"); return; }
+      this.mode = mode === "dictate" ? "dictate" : "build";
+      if (this.data) { this.data.mode = this.mode; this.save(); }
+      this.renderMode();
+      if (this.mode === "dictate") {
+        setTimeout(function () { try { $("pzInput").focus(); } catch (e) {} }, 60);
+      }
+    },
+
+    /* ---------------- 判对错 ---------------- */
+
+    countAttempt: function (ok) {
+      const d = this.data || this.load();
+      const rec = this.lev(this.levelId);
+      d.stats.attempts++;
+      rec.attempts++;
+      if (ok) {
+        d.stats.correct++;
+        rec.correct++;
+        d.stats.streak++;
+        if (d.stats.streak > d.stats.best) d.stats.best = d.stats.streak;
+      } else {
+        d.stats.streak = 0;
+      }
+      this.save();
+      $("pzStreak").textContent = "🔥 " + d.stats.streak;
+    },
+
+    checkBuild: function () {
+      if (this.solved || !this.item) return;
+      if (this.answer.length !== this.tokens.length) return;
+      const res = PatternCore.checkOrder(this.answer.map(function (c) { return c.text; }), this.tokens);
+      this.countAttempt(res.ok);
+      if (res.ok) { this.win(); return; }
+      this.loseBuild(res);
+    },
+
+    loseBuild: function (res) {
+      Sfx.soft();
+      const card = $("pzCard");
+      card.classList.remove("shake");
+      void card.offsetWidth;
+      card.classList.add("shake");
+      const fb = $("pzFeedback");
+      fb.classList.remove("hidden");
+      fb.innerHTML =
+        '<div class="pz-win soft"><div class="pz-win-badge">↻</div>' +
+          '<div class="pz-win-text"><b>顺序还差一点</b><span>第 ' + (res.firstBad + 1) + ' 个词再看一眼</span></div>' +
+        '</div>' +
+        '<div class="pz-acts">' +
+          '<button class="btn small" data-pz="speaksentence">🔊 再听一遍</button>' +
+          '<button class="btn small" data-pz="hint">💡 提示下一个词</button>' +
+        '</div>';
+    },
+
+    submitDictation: function () {
+      if (this.solved || !this.item) return;
+      const text = $("pzInput").value;
+      if (!String(text || "").trim()) { toast("先写一句再检查"); return; }
+      const res = PatternCore.diff(text, this.item.en);
+      this.countAttempt(res.ok);
+      if (res.ok) { this.win(); return; }
+      Sfx.soft();
+      const card = $("pzCard");
+      card.classList.remove("shake");
+      void card.offsetWidth;
+      card.classList.add("shake");
+      this.renderDiff(res);
+    },
+
+    renderDiff: function (res) {
+      const parts = res.cells.map(function (c) {
+        if (c.s === "same") return "<span>" + esc(c.t) + "</span>";
+        if (c.s === "missing") return '<span class="df-miss">' + esc(c.t) + "</span>";
+        if (c.s === "changed") {
+          return '<span class="df-wrong">' + esc(c.a) + '</span><span class="df-fix">' + esc(c.t) + "</span>";
+        }
+        return '<span class="df-extra">' + esc(c.a) + "</span>";
+      });
+      const sum = [];
+      if (res.missing) sum.push("漏了 " + res.missing + " 个词");
+      if (res.extra) sum.push("多了 " + res.extra + " 个词");
+      if (res.changed) sum.push("拼错 " + res.changed + " 个词");
+      const fb = $("pzFeedback");
+      fb.classList.remove("hidden");
+      fb.innerHTML =
+        '<div class="pz-win soft"><div class="pz-win-badge">⌨</div>' +
+          '<div class="pz-win-text"><b>再对一下</b><span>黄色是没对上或拼错的地方</span></div>' +
+        "</div>" +
+        '<div class="pz-diff">' + parts.join(" ") + "</div>" +
+        '<div class="pz-diff-sum">' + sum.map(function (s) { return "<span>" + esc(s) + "</span>"; }).join("") + "</div>" +
+        '<div class="pz-acts">' +
+          '<button class="btn small" data-pz="speaksentence">🔊 再听一遍</button>' +
+          '<button class="btn small" data-pz="hint">💡 下一个词</button>' +
+        "</div>";
+    },
+
+    win: function () {
+      const self = this;
+      this.solved = true;
+      this.cancelLoop();
+      TTS.stop();
+      $("pzSpeak").classList.remove("is-playing");
+      const rec = this.lev(this.levelId);
+      if (rec.done.indexOf(this.idx) === -1) rec.done.push(this.idx);
+      let next = -1;
+      for (let i = 0; i < this.items.length; i++) {
+        if (rec.done.indexOf(i) === -1) { next = i; break; }
+      }
+      rec.idx = next < 0 ? this.items.length : next;
+      if (!this.level.isArticle) this.data.last = this.levelId;
+      this.save();
+      Sfx.correct();
+      this.renderAnswer();
+      this.showSuccess();
+      this.autoTimer = setTimeout(function () { self.advance(); }, this.nextGap);
+    },
+
+    showSuccess: function () {
+      const it = this.item;
+      const fb = $("pzFeedback");
+      const last = this.idx + 1 >= this.items.length;
+      fb.classList.remove("hidden");
+      fb.innerHTML =
+        '<div class="pz-win"><div class="pz-win-badge">✓</div>' +
+          '<div class="pz-win-text"><b>拼对了！</b><span>连对 ' + this.data.stats.streak + ' 句</span></div>' +
+        "</div>" +
+        '<div class="pz-full">' + renderEn(it.en) + "</div>" +
+        (it.zh ? '<div class="pz-full-zh">' + esc(it.zh) + "</div>" : "") +
+        (it.hint ? '<div class="pz-note">💡 ' + esc(it.hint) + "</div>" : "") +
+        '<div class="pz-acts">' +
+          '<button class="btn small" data-pz="speaksentence">🔊 整句</button>' +
+          '<button class="btn small" data-pz="read">🎤 跟读</button>' +
+          '<button class="btn small" data-pz="mine"' + (Rec.has ? "" : " disabled") + '>▶ 听我的</button>' +
+        "</div>" +
+        '<button class="btn primary pz-next" data-pz="next">' + (last ? "看本关成绩" : "下一句") +
+          ' ›<i class="pz-next-bar" aria-hidden="true"></i></button>';
+      $("pzHintLine").textContent = "点整句里的任意单词可以查词、收进生词本。";
+    },
+
+    syncMine: function () {
+      const b = $("pzFeedback").querySelector('[data-pz="mine"]');
+      if (b) b.disabled = !Rec.has;
+    },
+
+    /* ---------------- 下一步 ---------------- */
+
+    cancelAuto: function () {
+      clearTimeout(this.autoTimer);
+      this.autoTimer = null;
+    },
+
+    advance: function () {
+      if (!this.inPlay || !this.solved) return;
+      const mask = $("wordMask");
+      if (mask && !mask.classList.contains("hidden")) {
+        const self = this;
+        this.cancelAuto();
+        this.autoTimer = setTimeout(function () { self.advance(); }, 2200);
+        return;
+      }
+      this.cancelTimers();
+      if (this.idx + 1 >= this.items.length) { this.finish(); return; }
+      this.idx++;
+      this.newSentence();
+    },
+
+    finish: function () {
+      this.cancelTimers();
+      this.isDone = true;
+      $("pzCard").classList.add("hidden");
+      $("pzFeedback").classList.add("hidden");
+      $("pzDone").classList.remove("hidden");
+      const rec = this.lev(this.levelId);
+      const total = this.items.length;
+      const done = Math.min(rec.done.length, total);
+      const acc = rec.attempts ? Math.round(rec.correct * 100 / rec.attempts) : 0;
+      $("pzDoneSub").textContent = this.level ? (this.level.name + (this.level.sub ? " · " + this.level.sub : "")) : "";
+      $("pzDoneStats").innerHTML =
+        '<span class="pz-stat">完成 <b>' + done + "/" + total + "</b></span>" +
+        '<span class="pz-stat">本关正确率 <b>' + acc + "%</b></span>" +
+        '<span class="pz-stat">最长连对 <b>' + this.data.stats.best + "</b></span>";
+      const pos = CHALLENGE_LEVELS.indexOf(this.findLevel(this.levelId));
+      const nextLv = pos >= 0 ? CHALLENGE_LEVELS[pos + 1] : null;
+      $("pzNextLevel").classList.toggle("hidden", !nextLv || this.isLocked(nextLv.id));
+      $("pzNextLevel").dataset.id = nextLv ? nextLv.id : "";
+      $("pzProgress").textContent = "已完成 " + total + " 句";
+      $("pzBar").style.width = "100%";
+      $("pzHintLine").textContent = "这一关的进度已经记在当前学习档案里。";
+      Sfx.level();
+    },
+
+    again: function () {
+      this.idx = 0;
+      this.isDone = false;
+      $("pzDone").classList.add("hidden");
+      $("pzCard").classList.remove("hidden");
+      this.newSentence();
+    },
+
+    nextLevel: function () {
+      const id = $("pzNextLevel").dataset.id;
+      if (!id) return;
+      this.startLevel(id);
+    },
+
+    toHome: function () {
+      this.cancelTimers();
+      this.inPlay = false;
+      this.isDone = false;
+      this.level = null;
+      this.items = [];
+      this.item = null;
+      this.solved = false;
+      $("pzHome").classList.remove("hidden");
+      $("pzPlay").classList.add("hidden");
+      if (currentView === "pattern") $("btnBack").classList.add("hidden");
+      this.renderHome();
+    },
+
+    pause: function () {
+      this.cancelTimers();
+    },
+
+    cancelTimers: function () {
+      this.cancelAuto();
+      this.cancelLoop();
+      clearTimeout(this.checkTimer);
+      this.checkTimer = null;
+      TTS.stop();
+      const b = $("pzSpeak");
+      if (b) b.classList.remove("is-playing");
+    },
+
+    onProfileChange: function () {
+      this.cancelTimers();
+      this.data = null;
+      this.inPlay = false;
+      this.isDone = false;
+      this.level = null;
+      this.items = [];
+      this.item = null;
+      this.solved = false;
+      this.loop = false;
+      this.blind = false;
+      this.mode = "build";
+      if (currentView === "pattern") {
+        $("pzHome").classList.remove("hidden");
+        $("pzPlay").classList.add("hidden");
+        $("btnBack").classList.add("hidden");
+        this.renderHome();
+      }
+    },
+
+    action: function (kind, el) {
+      switch (kind) {
+        case "level":
+          this.startLevel(el.dataset.id);
+          break;
+        case "chunk":
+          if (el.dataset.side === "answer") this.unplace(Number(el.dataset.uid));
+          else this.place(Number(el.dataset.uid));
+          break;
+        case "loop":
+          this.toggleLoop();
+          break;
+        case "blind":
+          this.toggleBlind();
+          break;
+        case "hint":
+          this.cancelAuto();
+          this.hint();
+          break;
+        case "next":
+          this.advance();
+          break;
+        case "speaksentence":
+          this.cancelAuto();
+          if (this.item) TTS.speak(this.item.en, {});
+          break;
+        case "read":
+          this.cancelAuto();
+          if (this.item) Rec.readAlong(this.item.en);
+          break;
+        case "mine":
+          this.cancelAuto();
+          Rec.play();
+          break;
+        default:
+          break;
+      }
+    }
+  };
+
   /* ========================= 事件分发 ========================= */
 
   function dispatch(act, data, el) {
@@ -3763,6 +4593,10 @@
       case "open-passage": {
         const it = findItem(data.id);
         if (it) Reader.open(it);
+        break;
+      }
+      case "goto-pattern": {
+        switchTab("pattern");
         break;
       }
       case "open-scenario": {
@@ -3914,6 +4748,7 @@
     $("btnBack").addEventListener("click", function () {
       if (currentView === "reader") Reader.close();
       else if (currentView === "chat") Chat.closeChat();
+      else if (currentView === "pattern") Pattern.toHome();
     });
 
     // 底栏
@@ -4175,6 +5010,55 @@
       });
     });
 
+    // 句型闯关
+    if ($("view-pattern")) {
+      $("view-pattern").addEventListener("click", function (e) {
+        const t = e.target.closest("[data-pz]");
+        if (!t) return;
+        Pattern.action(t.dataset.pz, t);
+      });
+      $("pzSpeak").addEventListener("click", function () { Pattern.speak(); });
+      $("pzClear").addEventListener("click", function () { Pattern.clearAnswer(); });
+      $("pzHint").addEventListener("click", function () { Pattern.hint(); });
+      $("pzDictHint").addEventListener("click", function () { Pattern.dictHint(); });
+      $("pzSubmit").addEventListener("click", function () { Pattern.submitDictation(); });
+      $("pzInput").addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          Pattern.submitDictation();
+        }
+      });
+      $("pzModeSeg").addEventListener("click", function (e) {
+        const b = e.target.closest("button");
+        if (b && b.dataset.mode) Pattern.setMode(b.dataset.mode);
+      });
+      $("pzBack").addEventListener("click", function () { Pattern.toHome(); });
+      $("btnPzContinue").addEventListener("click", function () { Pattern.startLevel(Pattern.continueId); });
+      $("btnPzArticle").addEventListener("click", function () { Pattern.startLastArticle(); });
+      $("pzAgain").addEventListener("click", function () { Pattern.again(); });
+      $("pzNextLevel").addEventListener("click", function () { Pattern.nextLevel(); });
+      $("pzDoneHome").addEventListener("click", function () { Pattern.toHome(); });
+      if ($("btnPatternFromReader")) {
+        $("btnPatternFromReader").addEventListener("click", function () {
+          if (!Reader.item) return;
+          const item = Reader.item;
+          Reader.stop();
+          Pattern.startFromArticle(item);
+          switchTab("pattern");
+        });
+      }
+    }
+
+    // 设置里的过关提示音
+    if ($("setSfx")) {
+      $("setSfx").addEventListener("click", function () {
+        State.settings.sfx = State.settings.sfx === false;
+        applySettings();
+        fillSettingsForm();
+        toast(State.settings.sfx ? "过关提示音已打开" : "过关提示音已关闭");
+      });
+    }
+
     // 分段控件：点完以后让胶囊滑到新位置（等各页面自己的 active 逻辑先跑完）
     document.addEventListener("click", function (e) {
       const b = e.target.closest(".seg button, .seg .seg-item");
@@ -4197,6 +5081,7 @@
     handleBack: function () {
       if (currentView === "reader") { Reader.close(); return "handled"; }
       if (currentView === "chat") { Chat.closeChat(); return "handled"; }
+      if (currentView === "pattern" && Pattern.inPlay) { Pattern.toHome(); return "handled"; }
       if (!$("flashWrap").classList.contains("hidden")) { Flash.close(); return "handled"; }
       if (currentView !== "library") { switchTab("library"); return "handled"; }
       return "exit";
@@ -4226,7 +5111,7 @@
     if (Bridge && Bridge.appVersion) {
       try { $("aboutVersion").textContent = "版本 " + Bridge.appVersion(); } catch (e) {}
     } else {
-      $("aboutVersion").textContent = "版本 1.3.0";
+      $("aboutVersion").textContent = "版本 1.5.0";
     }
     document.querySelectorAll("#tierSeg .seg-item").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tier === currentTier);

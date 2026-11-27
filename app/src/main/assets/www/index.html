@@ -47,6 +47,15 @@
         </div>
       </div>
 
+      <button class="pz-jump" data-act="goto-pattern" aria-label="进入句型闯关">
+        <span class="pz-jump-ico" aria-hidden="true">🧩</span>
+        <span class="pz-jump-main">
+          <b>句型闯关</b>
+          <span>看中文、听发音，把打散的词块拼回一句话</span>
+        </span>
+        <span class="pz-jump-go" aria-hidden="true">›</span>
+      </button>
+
       <div class="section-head">
         <b>今天读什么</b>
         <span>按年龄挑一组，点开就能读</span>
@@ -95,6 +104,7 @@
           <button class="chip" id="btnAccent">美音</button>
           <button class="chip" id="btnLoop">单句循环</button>
           <button class="chip" id="btnNotes">讲解</button>
+          <button class="chip" id="btnPatternFromReader">🧩 抽句闯关</button>
           <button class="chip ask-chip" id="btnAskTutor">🎙️ 问外教这篇</button>
         </div>
       </div>
@@ -176,6 +186,90 @@
           <button class="btn primary send-btn" id="btnSend">发送</button>
         </div>
         <div class="chat-hint" id="chatHintLine"></div>
+      </div>
+    </section>
+
+    <!-- ================= 句型闯关 ================= -->
+    <section class="view" id="view-pattern">
+      <div id="pzHome">
+        <div class="pz-hero">
+          <div class="pz-hero-eyebrow">主动回忆 · 比反复看更记得住</div>
+          <div class="pz-hero-title">句型闯关</div>
+          <div class="pz-hero-sub">看中文、听发音，把打散的词块按顺序拼回去；也可以切成听写，练完整拼写。全部离线。</div>
+          <div class="pz-stats" id="pzStats"></div>
+          <div class="row wrap pz-hero-acts">
+            <button class="btn primary grow" id="btnPzContinue">▶ 接着闯</button>
+            <button class="btn ghost" id="btnPzArticle">📖 从文章抽句</button>
+          </div>
+        </div>
+
+        <div class="section-head">
+          <b>三关，循序渐进</b>
+          <span>每关 10 句，随时可以停</span>
+        </div>
+        <div class="pz-levels" id="pzLevels"></div>
+        <p class="tiny center pz-foot">过关只看有没有拼对，不限时间；进度、正确率和连对都按学习档案分开记，只存在本机。</p>
+      </div>
+
+      <div id="pzPlay" class="hidden">
+        <div class="pz-top">
+          <button class="icon-btn" id="pzBack" aria-label="回到关卡列表">‹</button>
+          <div class="pz-top-main">
+            <div class="pz-top-name" id="pzLevelName">Level 1</div>
+            <div class="pz-top-sub" id="pzProgress">第 1 / 10 句</div>
+          </div>
+          <div class="pz-streak" id="pzStreak">🔥 0</div>
+        </div>
+        <div class="pz-bar" aria-hidden="true"><i id="pzBar"></i></div>
+
+        <div class="pz-card" id="pzCard">
+          <div class="pz-prompt-label">把这句话拼成英文</div>
+          <div class="pz-zh" id="pzZh"></div>
+          <div class="pz-audio-row">
+            <button class="pz-speak" id="pzSpeak">🔊 听一遍</button>
+            <button class="chip" id="pzLoopBtn" data-pz="loop" aria-pressed="false">单句循环</button>
+            <button class="chip" id="pzBlindBtn" data-pz="blind" aria-pressed="false">盲听模式</button>
+          </div>
+          <div class="pz-count" id="pzCount"></div>
+
+          <div class="seg pz-mode" id="pzModeSeg">
+            <button class="seg-item active" data-mode="build">🧩 词块拼句</button>
+            <button class="seg-item" data-mode="dictate">⌨️ 听写</button>
+          </div>
+
+          <div id="pzBuild">
+            <div class="pz-answer" id="pzAnswer" aria-live="polite"></div>
+            <div class="pz-pool" id="pzPool"></div>
+            <div class="pz-tools">
+              <button class="btn small ghost" id="pzHint">💡 提示下一词</button>
+              <button class="btn small ghost" id="pzClear">↺ 清空</button>
+            </div>
+          </div>
+
+          <div id="pzDictate" class="hidden">
+            <textarea id="pzInput" class="textarea" rows="2" placeholder="听发音，把整句写下来；大小写和标点不扣分" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+            <div class="pz-dictate-row">
+              <button class="btn small ghost" id="pzDictHint">💡 提示</button>
+              <button class="btn primary" id="pzSubmit">检查</button>
+            </div>
+          </div>
+
+          <div class="pz-feedback hidden" id="pzFeedback"></div>
+        </div>
+
+        <p class="tiny center pz-hintline" id="pzHintLine">拼对以后，点整句里的任意单词可以查词、收进生词本。</p>
+
+        <div class="pz-done hidden" id="pzDone">
+          <div class="pz-done-emoji" aria-hidden="true">🏁</div>
+          <div class="pz-done-title">这一关走完了</div>
+          <div class="pz-done-sub" id="pzDoneSub"></div>
+          <div class="pz-done-stats" id="pzDoneStats"></div>
+          <div class="pz-done-acts">
+            <button class="btn primary" id="pzAgain">🔁 再练一遍</button>
+            <button class="btn" id="pzNextLevel">下一关 ›</button>
+            <button class="btn ghost" id="pzDoneHome">回关卡列表</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -309,6 +403,14 @@
           </div>
           <button class="switch" id="setAutoPlay" role="switch"></button>
         </div>
+
+        <div class="field switch-row">
+          <div>
+            <div class="field-label">过关提示音</div>
+            <div class="tiny">句型闯关拼对时轻轻响一下；手机媒体音量为 0 时自动不响</div>
+          </div>
+          <button class="switch" id="setSfx" role="switch"></button>
+        </div>
       </div>
 
       <div class="card" id="speechCard">
@@ -390,6 +492,7 @@
   <nav class="tabbar" id="tabbar">
     <button class="tab active" data-tab="library"><span class="tab-ico">📚</span>书库</button>
     <button class="tab" data-tab="conv"><span class="tab-ico">💬</span>对话</button>
+    <button class="tab" data-tab="pattern"><span class="tab-ico">🧩</span>闯关</button>
     <button class="tab" data-tab="vocab"><span class="tab-ico">📒</span>生词本</button>
     <button class="tab" data-tab="settings"><span class="tab-ico">⚙️</span>设置</button>
   </nav>
@@ -510,6 +613,7 @@
 <script src="dict.js"></script>
 <script src="persona.js"></script>
 <script src="scenarios.js"></script>
+<script src="challenge.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

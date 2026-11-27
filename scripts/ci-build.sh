@@ -3,7 +3,7 @@
 # 英语陪读 —— GitHub Actions 自建构建脚本
 # 在 ubuntu-latest 上从零准备好 JDK 17 / Android SDK / Gradle 8.7，
 # 下载 SenseVoice + Silero VAD 离线语音模型，以及 Supertonic 离线神经音色模型，
-# 一起打进 assets，生成 Release APK 与校验文件，并发布到 Release v1.4.0。
+# 一起打进 assets，生成 Release APK 与校验文件，并发布到 Release v1.5.0。
 # 这样做的原因：workflow 文件只需要一行 `bash scripts/ci-build.sh`，
 # 构建逻辑放在普通文件里，后续调整不用改 workflow。
 # =============================================================================
@@ -222,7 +222,7 @@ echo "::endgroup::"
 
 # ----------------------------------------------------------------- 编译 -----
 mkdir -p dist
-APK_OUT="dist/EnglishReadingCompanion-v1.4.0.apk"
+APK_OUT="dist/EnglishReadingCompanion-v1.5.0.apk"
 
 if [ -n "${KEYSTORE_BASE64:-}" ] && [ -n "${KEYSTORE_PASSWORD:-}" ]; then
   echo "检测到正式签名 Secrets，编译正式签名 Release APK"
@@ -255,7 +255,7 @@ if [ ! -f "${APK_SRC}" ]; then
 fi
 
 cp "${APK_SRC}" "${APK_OUT}"
-( cd dist && sha256sum "EnglishReadingCompanion-v1.4.0.apk" > SHA256SUMS.txt )
+( cd dist && sha256sum "EnglishReadingCompanion-v1.5.0.apk" > SHA256SUMS.txt )
 
 echo "::group::构建产物"
 ls -lh dist
@@ -268,11 +268,11 @@ if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
     echo "::error::runner 上没有 gh CLI"
     exit 1
   fi
-  gh release view v1.4.0 >/dev/null 2>&1 \
-    || gh release create v1.4.0 --title "英语陪读 v1.4.0" --notes-file RELEASE_NOTES.md
-  gh release upload v1.4.0 "${APK_OUT}" dist/SHA256SUMS.txt --clobber
+  gh release view v1.5.0 >/dev/null 2>&1 \
+    || gh release create v1.5.0 --title "英语陪读 v1.5.0" --notes-file RELEASE_NOTES.md
+  gh release upload v1.5.0 "${APK_OUT}" dist/SHA256SUMS.txt --clobber
   echo "::group::Release"
-  gh release view v1.4.0 --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
+  gh release view v1.5.0 --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
   echo "::endgroup::"
 else
   echo "非 main 分支，跳过 Release 发布"
