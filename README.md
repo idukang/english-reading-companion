@@ -1,4 +1,4 @@
-# 英语陪读 · English Reading Companion
+# 青鸟 · English Reading Companion
 
 一个**全龄段、零花费、零广告、零埋点、断网可用**的英语陪读 Android 应用。
 
