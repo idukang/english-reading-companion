@@ -114,6 +114,8 @@ test("记忆本：能从用户的话里认出兴趣，也能把 TIP 收成薄弱
   assert.equal(MemoryBook.interestFrom("I love playing the guitar because it is fun."), "playing the guitar");
   assert.equal(MemoryBook.interestFrom("我特别喜欢打篮球。"), "打篮球");
   assert.equal(MemoryBook.interestFrom("今天天气不错"), "");
+  assert.equal(MemoryBook.interestFrom("I like it."), "");
+  assert.equal(MemoryBook.interestFrom("I love it because it is fun."), "");
 
   const weak = MemoryBook.weakFromTip("你说的是 I goes to school，第三人称单数要加 -s。再试一次。");
   assert.match(weak, /第三人称单数/);

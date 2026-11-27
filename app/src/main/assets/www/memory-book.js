@@ -164,6 +164,7 @@ const MemoryBook = {
   /** 从一句用户发言里认兴趣（英文 I like … / 中文 我喜欢…），认不出返回空串 */
   interestFrom: function (text) {
     const s = String(text == null ? "" : text);
+    const junk = /^(it|this|that|them|these|those|you|him|her|me|us|one|some|more|so|too|all|both)$/i;
     const en = s.match(/\bI(?:'m| am)?\s+(?:really\s+|also\s+|kind of\s+|a bit\s+)?(?:like|love|enjoy|am into|'m into)\s+([A-Za-z][A-Za-z\s'&/-]{1,40})/i);
     if (en) {
       let topic = en[1]
@@ -171,12 +172,12 @@ const MemoryBook = {
         .replace(/[.,!?;:].*$/, "")
         .replace(/\s+/g, " ")
         .trim();
-      if (topic.length > 1 && topic.length <= 30) return topic;
+      if (topic.length > 1 && topic.length <= 30 && !junk.test(topic)) return topic;
     }
     const zh = s.match(/我(?:很|超|最|特别|也|还)?(?:喜欢|爱|迷上|对)([^，。,.!?！？；;：:]{1,16})/);
     if (zh) {
       const topic = zh[1].replace(/^(了|着|听|看|玩|吃|做)/, "").trim();
-      if (topic.length >= 1) return topic;
+      if (topic.length >= 1 && !junk.test(topic)) return topic;
     }
     return "";
   },

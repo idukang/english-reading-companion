@@ -167,7 +167,7 @@ const QuizCore = {
     return a != null && b != null && Number(a) === Number(b);
   },
 
-  /** 把一串中文 / 英文里的兴趣句留给记忆本（"I like ..." / "我喜欢..."） */
+  /** 等级是否合法（A1 / A2 / B1 / B2） */
   isLevel: function (lv) {
     return QuizCore.LEVELS.indexOf(String(lv || "").toUpperCase()) >= 0;
   }
