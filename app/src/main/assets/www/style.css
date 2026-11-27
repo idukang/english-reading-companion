@@ -2607,3 +2607,242 @@ body[data-theme="dark"] .cefr-tag.lv-b2 { background: #2c2029; color: #d9aecd; b
   background: var(--accent);
   transition: width 0.16s linear;
 }
+
+/* ===========================================================
+   v1.7.0：梯子模式 / CEFR 快速定级 / 小任务卡 /
+   主动回忆与错因分诊 / 卡壳修复
+   =========================================================== */
+
+/* ---------------- 🪜 梯子模式 ---------------- */
+
+.ladder-bar {
+  margin: 2px 16px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+.ladder-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ladder-toggle {
+  flex: 1;
+  min-width: 132px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--text);
+  border-radius: 13px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.ladder-toggle.on { background: var(--accent-soft); border-color: var(--accent); }
+.ladder-ico { font-size: 16px; }
+.ladder-main { display: flex; flex-direction: column; line-height: 1.25; flex: 1; }
+.ladder-main b { font-size: 13.5px; }
+.ladder-main span { font-size: 11.5px; color: var(--text-2); }
+.ladder-toggle.on .ladder-main span { color: var(--accent); font-weight: 600; }
+.ladder-sw {
+  width: 40px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  position: relative;
+  flex: none;
+}
+.ladder-sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.16s ease;
+}
+.ladder-toggle.on .ladder-sw { background: var(--accent); border-color: var(--accent); }
+.ladder-toggle.on .ladder-sw::after { transform: translateX(16px); background: #fff; }
+.ladder-seg { flex: 1 1 100%; margin-top: 8px; }
+.ladder-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.ladder-acts { margin-top: 8px; }
+.ladder-acts .btn { width: 100%; }
+
+/* 盲听：文字还在，只是看不见，方便点句子重听 */
+#sentences.blind-listen .sent .en,
+#sentences.blind-listen .sent .en .index { color: transparent; }
+#sentences.blind-listen .sent .en .w { pointer-events: none; }
+#sentences.blind-listen .sent.active .en .index { color: var(--accent); }
+#sentences.blind-listen .sent { min-height: 3.2em; }
+
+/* 第 2 阶：生词本里的词高亮（点一下仍可查词） */
+.sent .en .w.hot {
+  background: var(--mark);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--mark);
+}
+
+.retell-card { margin-top: 12px; }
+
+/* ---------------- 🎯 CEFR 定级 / 任务卡 ---------------- */
+
+.conv-cefr { margin-top: 4px; }
+.task-card { border-style: dashed; }
+.task-text {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+  margin: 2px 0 4px;
+}
+.task-tip { color: var(--text-3); margin: 0 0 10px; }
+.task-card.done { opacity: 0.7; }
+
+.placement-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: var(--card-2);
+}
+.placement-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.placement-main b { font-size: 13.5px; }
+.placement-main .tiny { color: var(--text-3); font-size: 11.5px; }
+
+/* 定级弹层 */
+.pl-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  overflow: hidden;
+  margin: 2px 0 8px;
+}
+.pl-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.pl-step { font-size: 12px; color: var(--text-3); margin-bottom: 8px; }
+.pl-q { font-size: 15.5px; line-height: 1.6; font-weight: 600; margin: 4px 0 4px; }
+.pl-tag { font-size: 11.5px; color: var(--text-3); margin-bottom: 10px; }
+.pl-opts { display: flex; flex-direction: column; gap: 8px; }
+.pl-opt {
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 11px 13px;
+  min-height: 46px;
+}
+.pl-opt:active { transform: scale(0.99); }
+.pl-opt.picked { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.pl-foot { margin-top: 12px; }
+.pl-foot .btn { flex: 1; }
+
+.pl-result-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 8px;
+}
+.pl-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 700;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.pl-result-name { display: flex; flex-direction: column; }
+.pl-result-name b { font-size: 16px; }
+.pl-result-name span { font-size: 12px; color: var(--text-2); }
+.pl-links { margin: 8px 0 10px; padding: 0; list-style: none; }
+.pl-links li {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.pl-links li:last-child { border-bottom: 0; }
+.pl-links b { color: var(--text); font-weight: 600; }
+.pl-score { font-size: 12px; color: var(--text-3); }
+
+/* ---------------- 🧠 主动回忆 ---------------- */
+
+.flash-prompt { margin-top: 8px; }
+.flash-ear { margin-top: 10px; }
+.flash-card.recall .flash-word { letter-spacing: 0.01em; }
+.flash-ratings { margin: 4px 0 10px; }
+.flash-ratings-q { text-align: center; color: var(--text-3); margin-bottom: 8px; }
+.flash-rate { flex: 1; min-height: 42px; }
+.flash-rate.got { border-color: var(--accent); color: var(--accent); font-weight: 650; }
+.flash-rate.fuzzy { border-color: var(--line); }
+.flash-rate.miss { border-color: var(--warm, #bf5d38); color: var(--warm, #bf5d38); }
+
+.v-weak {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--warm-soft);
+  color: var(--warm);
+}
+.mem-item .mem-cause {
+  font-style: normal;
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warm-soft);
+  color: var(--warm);
+  margin-right: 4px;
+}
+
+/* 修复（Repair）拆句条 */
+.repair-line {
+  border: 1px dashed var(--line);
+  background: var(--card-2);
+  border-radius: 13px;
+  padding: 9px 11px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.repair-line b { color: var(--text); }
+.repair-line .repair-chunk {
+  display: inline-block;
+  margin: 4px 6px 0 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}

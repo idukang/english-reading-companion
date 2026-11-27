@@ -100,6 +100,26 @@
         <div class="meta" id="readerMeta"></div>
       </div>
 
+      <!-- 🪜 梯子模式：撤掉中文与提示的三阶阅读 -->
+      <div class="ladder-bar" id="ladderBar">
+        <div class="ladder-top">
+          <button class="ladder-toggle" id="btnLadder" aria-pressed="false" aria-label="梯子模式开关">
+            <span class="ladder-ico" aria-hidden="true">🪜</span>
+            <span class="ladder-main"><b>梯子模式</b><span id="ladderStageName">① 盲听首读</span></span>
+            <span class="ladder-sw" id="ladderSw" aria-hidden="true"></span>
+          </button>
+          <div class="seg small ladder-seg hidden" id="ladderSeg">
+            <button data-ls="1" class="active">① 盲听</button>
+            <button data-ls="2">② 对照</button>
+            <button data-ls="3">③ 复述</button>
+          </div>
+        </div>
+        <p class="ladder-hint" id="ladderHint">打开梯子：先不看中文，抓住主线；再放开对照修一遍；最后关掉中文自己复述。</p>
+        <div class="ladder-acts hidden" id="ladderActs">
+          <button class="btn small ghost" id="btnBlindListen">🙈 遮住英文听一遍</button>
+        </div>
+      </div>
+
       <div class="toolbar">
         <div class="row">
           <button class="btn primary grow play-btn" id="btnPlayAll" aria-pressed="false" aria-label="朗读全篇">
@@ -119,6 +139,18 @@
       </div>
 
       <div class="sentences" id="sentences"></div>
+
+      <div class="card retell-card hidden" id="retellCard">
+        <div class="card-head">
+          <h3>🗣️ 关译复述</h3>
+          <span class="pill">梯子第 3 阶</span>
+        </div>
+        <p class="hint">不看中文，用 3 句话把这一篇说出来：发生了什么、你怎么看、下一步。说不出就退回第 2 阶看一眼，再回来。</p>
+        <div class="row wrap">
+          <button class="btn primary small" data-act="ask-ai-reading">🎙️ 复述给外教听</button>
+          <button class="btn small ghost" id="btnRetellListen">🔊 只听全文</button>
+        </div>
+      </div>
 
       <div class="qa-block">
         <h3>🧠 读后两问</h3>
@@ -155,6 +187,31 @@
       <div class="hero">
         <div class="hero-title">开口说，才算学会</div>
         <div class="hero-sub">三个陪练角色对应三个年龄段：Buddy 陪你玩着说，Emma 帮你改句式，Alex 像真实职场那样追问。</div>
+      </div>
+
+      <div class="card cefr-card conv-cefr" id="convCefrCard">
+        <div class="card-head">
+          <h3>🎯 我的水平</h3>
+          <span class="pill" id="convCefrPill">未定级</span>
+        </div>
+        <p class="hint" id="convCefrHint">做 6 道贴近日常的小题，定出 A1 / A2 / B1 / B2；外教据此调整用词与语速，按级加词和选词填空也会跟着换默认等级。</p>
+        <div class="row wrap">
+          <button class="btn primary small" id="btnConvPlacement">🎯 快速定级</button>
+          <button class="btn small hidden" id="btnConvApplySpeed">用建议语速</button>
+        </div>
+      </div>
+
+      <div class="card task-card" id="taskCard">
+        <div class="card-head">
+          <h3>🎯 本轮小任务卡</h3>
+          <span class="pill" id="taskLvPill">可选</span>
+        </div>
+        <div class="task-text" id="taskText">换一张小任务卡：这一轮专心做一件小事，不拦着你自由聊。</div>
+        <p class="tiny task-tip" id="taskTip"></p>
+        <div class="row wrap">
+          <button class="btn small" id="btnTaskNext">🔀 换一张</button>
+          <button class="btn small ghost" id="btnTaskOff">这轮不用任务</button>
+        </div>
       </div>
 
       <div class="ai-card" id="aiCard"></div>
@@ -391,6 +448,7 @@
         </div>
         <div class="row vocab-actions">
           <button class="btn primary small" id="btnReview">🃏 卡片复习</button>
+          <button class="btn small" id="btnRecall">🧠 主动回忆</button>
           <button class="btn small" id="btnShowMastered">显示已掌握</button>
         </div>
       </div>
@@ -418,7 +476,8 @@
           <div class="flash-front" id="flashFront">
             <div class="flash-word" id="flashWord">word</div>
             <div class="flash-ipa" id="flashIpa"></div>
-            <div class="tiny">轻点卡片翻面</div>
+            <div class="tiny flash-prompt" id="flashPrompt">轻点卡片翻面</div>
+            <button class="btn small ghost flash-ear hidden" id="btnRecallEar">👂 只听读音</button>
           </div>
           <div class="flash-back hidden" id="flashBack">
             <div class="flash-pos" id="flashPos"></div>
@@ -426,18 +485,26 @@
             <div class="flash-ex" id="flashEx"></div>
           </div>
         </div>
-        <div class="flash-swipe-hint">← 左滑再记一下 · 右滑标记已掌握 →</div>
+        <div class="flash-swipe-hint" id="flashSwipeHint">← 左滑再记一下 · 右滑标记已掌握 →</div>
         <div class="flash-meta" id="flashMeta"></div>
-        <div class="row">
+        <div class="flash-ratings hidden" id="flashRatings">
+          <div class="tiny flash-ratings-q">先自己想一想，再翻看释义；照实选一个：</div>
+          <div class="row">
+            <button class="btn small flash-rate got" data-rate="got">😀 想起来了</button>
+            <button class="btn small flash-rate fuzzy" data-rate="fuzzy">🤔 模糊</button>
+            <button class="btn small flash-rate miss" data-rate="miss">😵 没记住</button>
+          </div>
+        </div>
+        <div class="row" id="flashCardActs">
           <button class="btn" id="flashPrev">上一个</button>
           <button class="btn primary grow" id="flashSpeak">🔊 读一遍</button>
           <button class="btn" id="flashNext">下一个</button>
         </div>
-        <div class="row">
+        <div class="row" id="flashJudgeActs">
           <button class="btn ghost grow" id="flashAgain">🔁 再记一下</button>
           <button class="btn primary grow" id="flashKnow">✅ 记住了</button>
         </div>
-        <div class="row">
+        <div class="row" id="flashMasterActs">
           <button class="btn ghost grow" id="flashMaster">✔️ 标记已掌握</button>
           <button class="btn ghost" id="flashClose">退出复习</button>
         </div>
@@ -453,6 +520,13 @@
         </div>
         <p class="hint">一个人一个档案：已读、生词、连续天数和默认年龄段、语速都分开记。不联网，卸载前都保存在本机。</p>
         <div class="profile-list" id="profileList"></div>
+        <div class="placement-row" id="placementRow">
+          <div class="placement-main">
+            <b id="placementLevel">还没定级</b>
+            <span class="tiny" id="placementSub">6 道场景小题，定出 A1–B2，自动联动加词与对话难度</span>
+          </div>
+          <button class="btn small primary" id="btnPlacementStart">🎯 快速定级</button>
+        </div>
         <div class="row wrap">
           <button class="btn primary small" id="btnProfileNew">＋ 新建档案</button>
         </div>
@@ -741,6 +815,31 @@
   </div>
 </div>
 
+<!-- CEFR 快速定级 -->
+<div class="sheet-mask hidden" id="placementMask">
+  <div class="sheet tall" id="placementSheet">
+    <div class="sheet-grip"></div>
+    <div class="word-head">
+      <h3 id="placementTitle">🎯 快速定级</h3>
+      <button class="icon-btn" id="plClose" aria-label="关闭">×</button>
+    </div>
+    <div class="pl-progress"><i id="plBar"></i></div>
+    <div class="pl-step" id="plStep">第 1 / 6 题</div>
+    <div id="plIntro">
+      <p class="hint">6 道贴近日常的小题：4 道场景自评 + 2 道微测。凭第一反应选，不用查词；结果只存在本机，用来调整加词等级、选词填空和外教难度。</p>
+    </div>
+    <div class="pl-q" id="plQ"></div>
+    <div class="pl-tag" id="plTag"></div>
+    <div class="pl-opts" id="plOpts"></div>
+    <div id="plResult" class="hidden"></div>
+    <div class="row pl-foot" id="plFoot">
+      <button class="btn ghost" id="plBack">‹ 上一题</button>
+      <button class="btn ghost" id="plQuit">先不测了</button>
+    </div>
+    <p class="tiny center" id="plNote">结果只是训练起点，不是考试等级；随时可以重测。</p>
+  </div>
+</div>
+
 <div class="toast-host" id="toast" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <!-- 学习档案：新建 / 改名 -->
@@ -797,6 +896,10 @@
 <script src="scenarios.js"></script>
 <script src="challenge.js"></script>
 <script src="quiz.js"></script>
+<script src="ladder.js"></script>
+<script src="placement.js"></script>
+<script src="recall.js"></script>
+<script src="repair.js"></script>
 <script src="memory-book.js"></script>
 <script src="updater.js"></script>
 <script src="app.js"></script>

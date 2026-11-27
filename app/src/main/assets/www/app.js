@@ -173,6 +173,12 @@
         p.tier = (p.tier === "teen" || p.tier === "adult") ? p.tier : "kids";
         p.speed = (typeof p.speed === "number" && p.speed > 0) ? p.speed : 1.0;
         p.voice = (p.voice === "system") ? "system" : "neural";
+        if (p.cefr && ["A1", "A2", "B1", "B2"].indexOf(String(p.cefr).toUpperCase()) < 0) {
+          delete p.cefr;
+          delete p.cefrAt;
+        } else if (p.cefr) {
+          p.cefr = String(p.cefr).toUpperCase();
+        }
       });
       if (!s.list.some(function (p) { return p.id === s.active; })) s.active = s.list[0].id;
 
@@ -325,6 +331,7 @@
       if (typeof v.dueAt !== "number" || !isFinite(v.dueAt) || v.dueAt < 0) v.dueAt = 0;
       if (typeof v.lapses !== "number" || v.lapses < 0) v.lapses = 0;
       if (typeof v.mastered !== "boolean") v.mastered = false;
+      if (v.weak && (typeof v.weak !== "object" || !v.weak.cause)) delete v.weak;
       return v;
     },
 
@@ -333,15 +340,39 @@
       return !v.dueAt || v.dueAt <= Date.now();
     },
 
+    /** 记下这次错因（form / sound / meaning），下次优先复现 */
+    noteWeak: function (v, causeId) {
+      if (!v || !causeId) return v;
+      this.upgrade(v);
+      v.weak = {
+        cause: String(causeId),
+        count: ((v.weak && Number(v.weak.count)) || 0) + 1,
+        ts: Date.now()
+      };
+      return v;
+    },
+
+    /** 薄弱点的人话标签（没有就返回空串） */
+    weakLabel: function (v) {
+      if (!v || !v.weak || !v.weak.cause) return "";
+      if (typeof Recall === "undefined") return "";
+      const c = Recall.cause(v.weak.cause);
+      return c ? c.label : "";
+    },
+
     dueCount: function () {
       return State.vocab.filter(function (v) { return SRS.isDue(v); }).length;
     },
 
-    /** 复习结果：remembered=true 记住了；false 再记一下 */
-    review: function (v, remembered) {
+    /** 复习结果：remembered=true 记住了；false 再记一下
+     *  quality 可选："fuzzy" 模糊（间隔不拉长，明天再来）/ "miss" 没记住（半小时后再来） */
+    review: function (v, remembered, quality) {
       this.upgrade(v);
+      const q = (quality === "fuzzy" || quality === "miss") ? quality : "";
       v.reps = (v.reps || 0) + 1;
-      if (remembered) {
+      if (q === "fuzzy") {
+        v.intervalDays = Math.max(1, Math.min(3, Number(v.intervalDays) || 1));
+      } else if (remembered) {
         let idx = 0;
         if (v.intervalDays > 0) {
           for (let i = 0; i < this.LADDER.length; i++) {
@@ -377,6 +408,10 @@
       return list.slice().sort(function (a, b) {
         const ra = rank(a), rb = rank(b);
         if (ra !== rb) return ra - rb;
+        // 最近错过的词优先复现（错因分诊写下的 weak.ts）
+        const wa = (a.weak && a.weak.ts) || 0;
+        const wb = (b.weak && b.weak.ts) || 0;
+        if (wa !== wb) return wb - wa;
         if ((a.dueAt || 0) !== (b.dueAt || 0)) return (a.dueAt || 0) - (b.dueAt || 0);
         return (a.ts || 0) - (b.ts || 0);
       });
@@ -393,12 +428,16 @@
       return "约 " + Math.round(days) + " 天后再复习";
     },
 
-    /** 开聊时挑最多 3 个到期或未掌握的词，交给外教自然复现 */
+    /** 开聊时挑最多 3 个词交给外教自然复现：最近错过的先上，再到期的 */
     forChat: function (limit) {
       const n = limit || 3;
       const pool = State.vocab.filter(function (v) { return !v.mastered; });
-      const sorted = this.queue(pool);
-      return sorted.slice(0, n);
+      const weak = pool.filter(function (v) { return v.weak && v.weak.ts; })
+        .sort(function (a, b) { return (b.weak.ts || 0) - (a.weak.ts || 0); })
+        .slice(0, n);
+      if (weak.length >= n) return weak;
+      const rest = this.queue(pool.filter(function (v) { return weak.indexOf(v) < 0; }));
+      return weak.concat(rest.slice(0, n - weak.length));
     }
   };
 
@@ -533,7 +572,8 @@
           '<button class="pr-pick" data-act="profile-switch" data-id="' + attr(p.id) + '">' +
             '<span class="pr-avatar">' + esc(p.emoji) + "</span>" +
             '<span class="pr-info"><b>' + esc(p.name) + "</b><small>" + esc(tierName(p.tier)) +
-              " · 已读 " + readN + " 篇 · 生词 " + wordN + " 个</small></span>" +
+              " · 已读 " + readN + " 篇 · 生词 " + wordN + " 个" +
+              (p.cefr ? " · CEFR " + esc(p.cefr) : "") + "</small></span>" +
             (active ? '<span class="pr-now">当前</span>' : "") +
           "</button>" +
           '<button class="icon-btn pr-edit" data-act="profile-edit" data-id="' + attr(p.id) + '" aria-label="改名与偏好">✎</button>' +
@@ -601,6 +641,7 @@
     currentConvTier = p.tier || "kids";
     if (typeof p.speed === "number" && p.speed > 0) State.settings.speed = p.speed;
     State.settings.voice = (p.voice === "system") ? "system" : "neural";
+    cefrLevel = profileLevel() || "A1";
     document.querySelectorAll("#tierSeg .seg-item").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tier === currentTier);
     });
@@ -619,6 +660,10 @@
     Memory.load();
     Memory.render();
     if (typeof Quiz !== "undefined") Quiz.onProfileChange();
+    Tasks.load();
+    renderPlacementUI();
+    renderConvCefr();
+    renderTasks();
     requestAnimationFrame(function () { syncAllSegs(); });
   }
 
@@ -2055,12 +2100,92 @@
 
   /* ========================= 阅读器 ========================= */
 
+  /* ========================= 🪜 梯子模式 =========================
+     撤掉支架的三阶阅读：① 盲听首读 → ② 对照修复 → ③ 关译复述。
+     开关与上次停在第几阶都按学习档案保存在本机（erc.p.<id>.ladder），
+     下次打开同一篇还是上次那一阶；换档案就跟着换。 */
+
+  const LadderMode = {
+    KEY: "ladder",
+    pref: { on: false, stage: 1 },
+
+    load: function () {
+      this.pref = Ladder.sanitize(ProfileStore.data(this.KEY, null));
+      return this.pref;
+    },
+
+    save: function () {
+      ProfileStore.save(this.KEY, Ladder.pref(this.pref.on, this.pref.stage));
+    },
+
+    stage: function () { return Ladder.stage(this.pref.stage); },
+
+    setOn: function (on) {
+      this.pref.on = !!on;
+      this.save();
+      this.apply();
+      toast(this.pref.on
+        ? "梯子模式已打开：" + this.stage().short + " " + this.stage().name
+        : "梯子模式已关闭，中文和讲解照常显示");
+    },
+
+    setStage: function (n) {
+      const id = Ladder.normalize(n);
+      this.pref.on = true;
+      this.pref.stage = id;
+      this.save();
+      this.apply();
+      toast(this.stage().short + " " + this.stage().name + "：" + this.stage().desc);
+    },
+
+    /** 阶段变化后重画阅读器句子与梯子条 */
+    apply: function () {
+      if (Reader.item) Reader.rerender();
+      this.render();
+    },
+
+    render: function () {
+      const bar = $("ladderBar");
+      if (!bar) return;
+      const on = !!this.pref.on;
+      const s = this.stage();
+      $("btnLadder").classList.toggle("on", on);
+      $("btnLadder").setAttribute("aria-pressed", on ? "true" : "false");
+      $("ladderStageName").textContent = on ? (s.short + " " + s.name) : "关";
+      $("ladderSeg").classList.toggle("hidden", !on);
+      $("ladderActs").classList.toggle("hidden", !(on && s.blind));
+      bar.querySelectorAll("#ladderSeg button").forEach(function (b) {
+        b.classList.toggle("active", Number(b.dataset.ls) === s.id);
+      });
+      const hint = $("ladderHint");
+      if (hint) {
+        if (!on) {
+          hint.textContent = "打开梯子：先不看中文，抓住主线；再放开对照修一遍；最后关掉中文自己复述。";
+        } else if (!State.settings.bilingual) {
+          hint.textContent = s.desc + "（全局「显示中文对照」现在是关的，第 2 阶也会看不到中文。）";
+        } else {
+          hint.textContent = s.desc;
+        }
+      }
+      const retell = $("retellCard");
+      if (retell) retell.classList.toggle("hidden", !(on && s.retell));
+      const blindBtn = $("btnBlindListen");
+      if (blindBtn) {
+        blindBtn.classList.toggle("on", !!Reader.blind);
+        blindBtn.textContent = Reader.blind ? "👀 恢复显示英文" : "🙈 遮住英文听一遍";
+      }
+    }
+  };
+
   const Reader = {
     item: null,
 
     open: function (item) {
       if (!item) return;
       this.item = item;
+      LadderMode.load();
+      this.blind = false;
+      if ($("sentences")) $("sentences").classList.remove("blind-listen");
       if (State.read.indexOf(item.id) === -1) {
         State.read.push(item.id);
         saveRead();
@@ -2072,6 +2197,7 @@
       $("readerMeta").innerHTML = meta.map(function (m) { return "<span>" + esc(m) + "</span>"; }).join("");
 
       this.renderSentences(item);
+      LadderMode.render();
       renderQA(item);
       Rec.has = false;
       Rec.state = "idle";
@@ -2084,17 +2210,54 @@
 
     renderSentences: function (item) {
       const wrap = $("sentences");
+      const on = !!LadderMode.pref.on;
+      const stage = LadderMode.pref.stage;
+      const showZh = Ladder.zhVisible(State.settings.bilingual, on, stage);
+      const showNotes = Ladder.notesVisible(State.settings.notes, on, stage);
       wrap.innerHTML = '<span class="focus-bar" aria-hidden="true"></span>' +
         (item.sentences || []).map(function (s, i) {
           const zh = (item.zh && item.zh[i]) ? item.zh[i] : "";
           const note = (item.notes && item.notes[i]) ? item.notes[i] : "";
           return '<div class="sent" data-idx="' + i + '">' +
             '<div class="en"><span class="index">' + (i + 1) + "</span>" + renderEn(s) + "</div>" +
-            (State.settings.bilingual && zh ? '<div class="zh">' + esc(zh) + "</div>" : "") +
-            (State.settings.notes && note ? '<div class="note">' + esc(note) + "</div>" : "") +
+            (showZh && zh ? '<div class="zh">' + esc(zh) + "</div>" : "") +
+            (showNotes && note ? '<div class="note">' + esc(note) + "</div>" : "") +
           "</div>";
         }).join("");
+      if (Ladder.highlightOn(on, stage)) this.highlightVocab(wrap);
       if (this.playing) this.focusOn();
+    },
+
+    /** 第 2 阶「对照修复」：把生词本里还没掌握的单词标出来 */
+    highlightVocab: function (wrap) {
+      const hot = {};
+      State.vocab.forEach(function (v) {
+        if (v && v.w && !v.mastered) hot[String(v.w).toLowerCase()] = true;
+      });
+      if (!Object.keys(hot).length) return;
+      wrap.querySelectorAll(".w").forEach(function (el) {
+        const w = String(el.dataset.w || "").toLowerCase().replace(/[’]/g, "'");
+        if (hot[w]) el.classList.add("hot");
+      });
+    },
+
+    /** 遮住英文听一遍：文字还在（可以点句子重听），只是先看不见 */
+    toggleBlindListen: function () {
+      if (!this.item) return;
+      const wrap = $("sentences");
+      if (this.blind) {
+        this.blind = false;
+        if (wrap) wrap.classList.remove("blind-listen");
+        this.stop();
+        LadderMode.render();
+        return;
+      }
+      this.blind = true;
+      if (wrap) wrap.classList.add("blind-listen");
+      this.idx = 0;
+      this.playAll();
+      LadderMode.render();
+      toast("遮住英文，先用耳朵过一遍；再点一次恢复显示");
     },
 
     rerender: function () {
@@ -2102,11 +2265,13 @@
       const keep = this.idx;
       this.renderSentences(this.item);
       this.setActive(keep || 0);
+      LadderMode.render();
     },
 
     close: function () {
       TTS.stop();
       this.playing = false;
+      this.blind = false;
       this.ui(false);
       this.clearFocus();
       this.item = null;
@@ -2180,6 +2345,7 @@
 
     playing: false,
     idx: 0,
+    blind: false,
 
     playAll: function () {
       if (!this.width()) return;
@@ -2193,6 +2359,11 @@
         this.playing = false;
         this.ui(false);
         this.clearFocus();
+        if (this.blind) {
+          this.blind = false;
+          if ($("sentences")) $("sentences").classList.remove("blind-listen");
+          LadderMode.render();
+        }
         return;
       }
       this.idx = idx;
@@ -2238,6 +2409,11 @@
       TTS.stop();
       this.ui(false);
       this.clearFocus();
+      if (this.blind) {
+        this.blind = false;
+        if ($("sentences")) $("sentences").classList.remove("blind-listen");
+        LadderMode.render();
+      }
     }
   };
 
@@ -2404,6 +2580,7 @@
         '<div class="v-main">' +
           '<div class="v-word">' + esc(v.w) + cefrTag(v.lv || cefrOf(v.w)) + (v.ipa ? ' <span class="v-ipa">' + esc(v.ipa) + "</span>" : "") + "</div>" +
           '<div class="v-zh">' + (v.pos ? esc(v.pos) + " " : "") + esc(v.zh) + "</div>" +
+          (SRS.weakLabel(v) ? '<span class="v-weak">🎯 ' + esc(SRS.weakLabel(v)) + "</span>" : "") +
           (v.mastered ? "" : '<div class="v-due' + (SRS.isDue(v) ? " hot" : "") + '">' + esc(SRS.dueText(v)) + "</div>") +
         "</div>" +
         '<button class="icon-btn" data-act="vocab-speak" data-w="' + attr(v.w) + '" aria-label="发音">🔊</button>' +
@@ -2486,8 +2663,12 @@
     suppressClick: false,
     swiping: false,
     bound: false,
+    mode: "card",
+    earOnly: false,
 
-    open: function () {
+    open: function (mode) {
+      this.mode = mode === "recall" ? "recall" : "card";
+      this.earOnly = false;
       const pool = State.vocab.filter(function (v) { return !v.mastered; });
       pool.forEach(function (v) { SRS.upgrade(v); });
       // 到期的最先复习，然后是没复习过的，最后是还没到期的
@@ -2497,6 +2678,7 @@
       this.flipped = false;
       $("vocabList").classList.add("hidden");
       $("flashWrap").classList.remove("hidden");
+      if ($("flashCard")) $("flashCard").classList.toggle("recall", this.mode === "recall");
       this.bindSwipe();
       this.render();
       Streak.mark();
@@ -2511,18 +2693,30 @@
     render: function () {
       const v = this.list[this.i];
       if (!v) { this.close(); return; }
+      const recall = this.mode === "recall";
       this.resetCard();
-      $("flashWord").textContent = v.w;
-      $("flashIpa").textContent = v.ipa || "";
+      $("flashWord").textContent = (recall && this.earOnly) ? "👂" : v.w;
+      $("flashIpa").textContent = recall ? "" : (v.ipa || "");
       $("flashFront").classList.toggle("hidden", this.flipped);
       $("flashBack").classList.toggle("hidden", !this.flipped);
+      if ($("flashPrompt")) {
+        $("flashPrompt").textContent = recall
+          ? (this.earOnly ? "只听读音，先想意思；轻点卡片翻看释义" : "先在心里想意思，再轻点卡片翻看释义")
+          : "轻点卡片翻面";
+      }
+      if ($("btnRecallEar")) $("btnRecallEar").classList.toggle("hidden", !recall || this.flipped);
       $("flashPos").innerHTML = cefrTag(v.lv || cefrOf(v.w)) + (v.pos ? esc(v.pos) : "");
       $("flashZh").textContent = v.zh || "";
       $("flashEx").innerHTML = v.ex ? esc(v.ex) + (v.exZh ? '<div class="ex-zh">' + esc(v.exZh) + "</div>" : "") : "";
       if ($("flashMeta")) {
-        $("flashMeta").textContent = "第 " + (v.reps || 0) + " 次复习 · " + SRS.dueText(v);
+        $("flashMeta").textContent = "第 " + (v.reps || 0) + " 次复习 · " + SRS.dueText(v) +
+          (SRS.weakLabel(v) ? " · 🎯 " + SRS.weakLabel(v) : "");
         $("flashMeta").classList.toggle("hot", SRS.isDue(v));
       }
+      if ($("flashRatings")) $("flashRatings").classList.toggle("hidden", !(recall && this.flipped));
+      if ($("flashJudgeActs")) $("flashJudgeActs").classList.toggle("hidden", recall);
+      if ($("flashSwipeHint")) $("flashSwipeHint").classList.toggle("hidden", recall);
+      if ($("flashMaster")) $("flashMaster").classList.toggle("hidden", recall);
     },
 
     resetCard: function () {
@@ -2532,6 +2726,51 @@
       card.style.transform = "";
       card.style.opacity = "";
       card.querySelectorAll(".fc-stamp").forEach(function (s) { s.classList.remove("on"); });
+    },
+
+    /** 只听读音：不显示单词，先靠声音回忆（错因会算“听音辨识弱”） */
+    earOnlyPlay: function () {
+      const v = this.list[this.i];
+      if (!v || this.mode !== "recall") return;
+      this.earOnly = true;
+      this.flipped = false;
+      this.render();
+      TTS.speak(v.head || v.w, {});
+    },
+
+    /** 主动回忆自评：想起来了 / 模糊 / 没记住 */
+    rate: function (id) {
+      const v = this.list[this.i];
+      const r = Recall.rating(id);
+      if (!v || !r) return;
+      if (r.quality === "good") {
+        SRS.review(v, true);
+        if (v.weak) delete v.weak; // 这次想起来了，清掉临时的薄弱标记
+      } else if (r.quality === "fuzzy") {
+        SRS.review(v, true, "fuzzy");
+        this.triage(v, "meaning");
+      } else {
+        SRS.review(v, false, "miss");
+        this.triage(v, this.earOnly ? "sound" : "form");
+      }
+      saveVocab();
+      renderVocab();
+      if (r.quality === "good") {
+        toast("想起来了，" + SRS.dueText(v));
+      } else {
+        const causeId = (r.quality === "fuzzy") ? "meaning" : (this.earOnly ? "sound" : "form");
+        const c = Recall.cause(causeId);
+        toast((c ? c.emoji + " " + c.label + "：" : "") + (c ? c.tip : "再遇到它一次"));
+      }
+      this.next();
+    },
+
+    /** 错因归到生词和记忆本：下次复习、开聊时优先复现 */
+    triage: function (v, causeId) {
+      if (!v || !causeId) return;
+      SRS.noteWeak(v, causeId);
+      markWeakInVocab(v.w, causeId);
+      Memory.weakWord(v.w, v.zh || v.head || "", "主动回忆", causeId);
     },
 
     /** 左滑：再记一下（半个多小时后再来）；右滑：已掌握。动作与下面按钮完全一致。 */
@@ -2567,6 +2806,7 @@
 
       card.addEventListener("pointerdown", function (e) {
         if (e.button !== 0 || Flash.swiping) return;
+        if (Flash.mode === "recall") return; // 主动回忆用三档自评，不靠滑动
         active = true;
         moved = false;
         sx = lastX = e.clientX;
@@ -2617,6 +2857,7 @@
       if (!this.list.length) return;
       this.i = (this.i + 1) % this.list.length;
       this.flipped = false;
+      this.earOnly = false;
       this.render();
     },
 
@@ -2624,6 +2865,7 @@
       if (!this.list.length) return;
       this.i = (this.i - 1 + this.list.length) % this.list.length;
       this.flipped = false;
+      this.earOnly = false;
       this.render();
     },
 
@@ -2788,12 +3030,14 @@
       return res.added;
     },
 
-    /** 自动沉淀：错题里的词 → 一条薄弱点 */
-    weakWord: function (word, zh, where) {
+    /** 自动沉淀：错题里的词 → 一条薄弱点（causeId 可选：form / sound / meaning） */
+    weakWord: function (word, zh, where, causeId) {
       const w = MemoryBook.text(word);
       if (!w) return false;
       const hint = MemoryBook.text(zh);
-      const text = (where ? where + "：“" : "“") + w + "”" + (hint ? "（" + hint + "）" : "") + "还不太熟";
+      const label = (causeId && typeof Recall !== "undefined") ? Recall.causeLabel(causeId) : "";
+      const text = (label ? "【" + label + "】" : "") +
+        (where ? where + "：“" : "“") + w + "”" + (hint ? "（" + hint + "）" : "") + "还不太熟";
       const res = this.add("weak", text, "auto");
       if (res.added) this.render();
       return res.added;
@@ -2816,6 +3060,16 @@
       renderMemoryEntry();
     }
   };
+
+  /** 如果一个词已在生词本里，把这次错因也记到它身上（下次优先复现） */
+  function markWeakInVocab(word, causeId) {
+    const w = String(word || "").toLowerCase().replace(/[’]/g, "'");
+    if (!w) return;
+    const v = State.vocab.filter(function (x) { return x.w === w; })[0];
+    if (!v) return;
+    SRS.noteWeak(v, causeId);
+    saveVocab();
+  }
 
   function renderMemory() {
     const list = $("memoryList");
@@ -2849,6 +3103,261 @@
     if (!el) return;
     const line = Memory.brief(3);
     el.textContent = line || "还没有记下什么。聊几句、做几道题，薄弱点和兴趣就会自己记进来。";
+  }
+
+  /* ========================= 🎯 CEFR 快速定级 =========================
+     6 道小题定出 A1–B2，结果存在档案对象里（p.cefr），自动联动：
+       · 生词本「按等级加词」默认等级
+       · 选词填空 / 英汉配对的默认等级
+       · 外教 System Prompt 的难度指令 + 对话页的语速建议
+     只在本机计算与保存，不联网、不上报。 */
+
+  /** 当前档案的定级结果；没测过返回空串 */
+  function profileLevel() {
+    const p = ProfileStore.profile();
+    return (p && Placement.isLevel(p.cefr)) ? String(p.cefr).toUpperCase() : "";
+  }
+
+  function saveProfileLevel(lv) {
+    const p = ProfileStore.profile();
+    if (!p) return false;
+    if (!Placement.isLevel(lv)) { delete p.cefr; delete p.cefrAt; }
+    else { p.cefr = String(lv).toUpperCase(); p.cefrAt = Date.now(); }
+    ProfileStore.saveStore();
+    return true;
+  }
+
+  /** 定级结果 → 联动各处默认等级（词汇、闯关、界面） */
+  function applyPlacementLevel(lv) {
+    const level = Placement.isLevel(lv) ? String(lv).toUpperCase() : "";
+    saveProfileLevel(level);
+    if (level) {
+      cefrLevel = level;
+      renderCefrCard();
+      if (typeof Quiz !== "undefined" && Quiz.setLevels) Quiz.setLevels(level);
+    }
+    renderProfiles();
+    renderPlacementUI();
+    renderConvCefr();
+    renderTasks();
+  }
+
+  function renderPlacementUI() {
+    const lv = profileLevel();
+    const levelEl = $("placementLevel");
+    const subEl = $("placementSub");
+    const btn = $("btnPlacementStart");
+    if (!levelEl) return;
+    if (lv) {
+      const info = Placement.infoOf(lv);
+      levelEl.textContent = "CEFR " + info.lv + " · " + info.label.split(" · ")[1];
+      if (subEl) subEl.textContent = "加词与选词填空默认 " + info.vocab + "，外教建议语速 " + fmtSpeed(info.speed) + "；随时可以重测";
+      if (btn) btn.textContent = "重新测一次";
+    } else {
+      levelEl.textContent = "还没定级";
+      if (subEl) subEl.textContent = "6 道场景小题，定出 A1–B2，自动联动加词与对话难度";
+      if (btn) btn.textContent = "🎯 快速定级";
+    }
+  }
+
+  function renderConvCefr() {
+    const pill = $("convCefrPill");
+    if (!pill) return;
+    const lv = profileLevel();
+    const info = lv ? Placement.infoOf(lv) : null;
+    pill.textContent = lv ? ("CEFR " + lv) : "未定级";
+    pill.classList.toggle("ok", !!lv);
+    const hint = $("convCefrHint");
+    if (hint) {
+      hint.textContent = lv
+        ? info.label + "。" + info.desc + " 外教建议语速 " + fmtSpeed(info.speed) + "，按级加词和选词填空默认 " + info.vocab + "。"
+        : "做 6 道贴近日常的小题，定出 A1 / A2 / B1 / B2；外教据此调整用词与语速，按级加词和选词填空也会跟着换默认等级。";
+    }
+    const speedBtn = $("btnConvApplySpeed");
+    if (speedBtn) {
+      speedBtn.classList.toggle("hidden", !lv);
+      if (lv) speedBtn.textContent = "用建议语速 " + fmtSpeed(info.speed);
+    }
+  }
+
+  /** 把建议语速写进当前档案（用户亲自点按钮才改） */
+  function applySuggestedSpeed() {
+    const lv = profileLevel();
+    if (!lv) { toast("先做一次快速定级"); return; }
+    const info = Placement.infoOf(lv);
+    State.settings.speed = info.speed;
+    const p = ProfileStore.profile();
+    if (p) { p.speed = info.speed; ProfileStore.saveStore(); }
+    applySettings();
+    if (currentView === "settings") fillSettingsForm();
+    renderProfiles();
+    toast("语速已设为 " + fmtSpeed(info.speed) + "，之后可以随时在设置里改");
+  }
+
+  /** 定级弹层：一题一屏，选完自动下一题；结果页可一键应用 */
+  const Placing = {
+    i: 0,
+    answers: [],
+    done: false,
+    result: "",
+
+    start: function () {
+      this.i = 0;
+      this.answers = [];
+      this.done = false;
+      this.result = "";
+      $("placementMask").classList.remove("hidden");
+      $("plIntro").classList.remove("hidden");
+      $("plFoot").classList.remove("hidden");
+      $("plNote").classList.remove("hidden");
+      this.render();
+    },
+
+    close: function () {
+      $("placementMask").classList.add("hidden");
+    },
+
+    render: function () {
+      if (this.done) { this.renderResult(); return; }
+      const n = Placement.questions.length;
+      const q = Placement.questions[this.i];
+      if (!q) return;
+      if (this.answers.length) $("plIntro").classList.add("hidden");
+      $("plResult").classList.add("hidden");
+      $("plQ").classList.remove("hidden");
+      $("plTag").classList.remove("hidden");
+      $("plOpts").classList.remove("hidden");
+      $("plBar").style.width = Math.round(this.i * 100 / n) + "%";
+      $("plStep").textContent = "第 " + (this.i + 1) + " / " + n + " 题";
+      $("plQ").textContent = q.q;
+      $("plTag").textContent = q.tag + " · 凭第一反应选，不用查词";
+      const picked = this.answers[this.i];
+      $("plOpts").innerHTML = q.opts.map(function (o, oi) {
+        return '<button class="pl-opt' + (picked === oi ? " picked" : "") + '" data-pl="opt" data-i="' + oi + '">' + esc(o.t) + "</button>";
+      }).join("");
+      $("plBack").disabled = this.i === 0;
+    },
+
+    choose: function (oi) {
+      const q = Placement.questions[this.i];
+      if (!q || !q.opts[oi]) return;
+      this.answers[this.i] = oi;
+      if (this.i + 1 < Placement.questions.length) {
+        this.i++;
+        this.render();
+        return;
+      }
+      this.done = true;
+      this.result = Placement.level(this.answers);
+      this.renderResult();
+    },
+
+    back: function () {
+      if (this.i > 0) { this.i--; this.done = false; this.render(); }
+    },
+
+    renderResult: function () {
+      const lv = this.result || Placement.level(this.answers);
+      const info = Placement.infoOf(lv);
+      const score = Placement.score(this.answers);
+      const total = Placement.questions.length * 3;
+      $("plIntro").classList.add("hidden");
+      $("plQ").classList.add("hidden");
+      $("plTag").classList.add("hidden");
+      $("plOpts").classList.add("hidden");
+      $("plFoot").classList.add("hidden");
+      $("plNote").classList.remove("hidden");
+      $("plBar").style.width = "100%";
+      $("plStep").textContent = "测完了 · 共 " + score + " / " + total + " 分";
+      const box = $("plResult");
+      box.classList.remove("hidden");
+      box.innerHTML =
+        '<div class="pl-result-head"><div class="pl-badge">' + esc(lv) + "</div>" +
+          '<div class="pl-result-name"><b>' + esc(info.label) + '</b><span class="pl-score">这只是训练起点，不是考试等级</span></div>' +
+        "</div>" +
+        '<p class="hint">' + esc(info.desc) + "</p>" +
+        '<ul class="pl-links">' +
+          '<li><b>生词本 · 按级加词</b><span>默认 ' + info.vocab + "，一次 10 个本级词</span></li>" +
+          '<li><b>选词填空 / 英汉配对</b><span>默认 ' + info.quiz + " 级</span></li>" +
+          '<li><b>外教对话</b><span>建议语速 ' + fmtSpeed(info.speed) + "；" + esc(info.tutor) + "</span></li>" +
+        "</ul>" +
+        '<button class="btn primary block" data-pl="apply">用这个结果开始练</button>' +
+        '<button class="btn ghost block" data-pl="retry" style="margin-top:8px">重新测一次</button>';
+    },
+
+    apply: function () {
+      if (!this.result) return;
+      applyPlacementLevel(this.result);
+      this.close();
+      const info = Placement.infoOf(this.result);
+      toast("已定级 " + info.label + "：加词与闯关默认 " + info.vocab + "，外教建议语速 " + fmtSpeed(info.speed));
+    }
+  };
+
+  /* ========================= 🎯 本轮小任务卡 =========================
+     每次只挂一张，可换、可关；不强制、不拦截自由聊天。
+     配了 AI 接口时，任务会跟着上下文交给外教，让它顺着任务接话。 */
+
+  const Tasks = {
+    KEY: "task",
+    active: null,
+
+    load: function () {
+      const d = ProfileStore.data(this.KEY, null);
+      const id = (d && typeof d === "object") ? d.id : "";
+      const t = id ? Placement.taskById(id) : null;
+      const deck = Placement.taskDeck(profileLevel() || "A1");
+      const ok = t && deck.some(function (c) { return c.id === t.id; });
+      this.active = ok ? t : null;
+      // 等级变了之后旧任务卡可能已不在这一级的牌里：从本档案清掉
+      if (id && !ok) this.save();
+      return this.active;
+    },
+
+    save: function () {
+      ProfileStore.save(this.KEY, this.active ? { id: this.active.id } : null);
+    },
+
+    level: function () { return profileLevel() || "A1"; },
+
+    next: function () {
+      const t = Placement.pickTask(this.level(), this.active ? this.active.id : "");
+      if (!t) return;
+      this.active = t;
+      this.save();
+      renderTasks();
+      toast("小任务：" + t.text);
+    },
+
+    clear: function () {
+      this.active = null;
+      this.save();
+      renderTasks();
+      toast("这轮不安排任务，自由聊");
+    },
+
+    /** 给外教的上下文：只要任务卡在，就带着走 */
+    context: function () {
+      if (!this.active) return "";
+      return "\n\n【本轮小任务卡】" + this.active.text +
+        "\n请在不打断自由聊天的前提下，顺着这张小任务接话、提问和示范；学生明显想聊别的就先跟着他聊，不要反复提醒任务。";
+    }
+  };
+
+  function renderTasks() {
+    const el = $("taskText");
+    if (!el) return;
+    const pill = $("taskLvPill");
+    const tip = $("taskTip");
+    if (Tasks.active) {
+      el.textContent = Tasks.active.text;
+      if (tip) tip.textContent = "💡 " + Tasks.active.tip;
+      if (pill) pill.textContent = "可选 · " + Tasks.active.min + " 起";
+    } else {
+      el.textContent = "换一张小任务卡：这一轮专心做一件小事，不拦着你自由聊。";
+      if (tip) tip.textContent = "";
+      if (pill) pill.textContent = "可选 · 当前 " + Tasks.level();
+    }
   }
 
   /* ========================= 情景对话 ========================= */
@@ -2910,7 +3419,8 @@
       $("btnZhChat").classList.toggle("on", this.zh);
       $("btnZhChat").textContent = this.zh ? "中文 ✓" : "译 中文";
       $("chatStream").innerHTML = "";
-      $("chatHintLine").textContent = "目标：" + (sc.goal || "用简单的一句英文回答") + " · " + Ear.modeName() + "，中文提问也懂";
+      $("chatHintLine").textContent = "目标：" + (sc.goal || "用简单的一句英文回答") + " · " + Ear.modeName() + "，中文提问也懂" +
+        (Tasks.active ? " · 🎯 " + Tasks.active.text : "");
       Live.render();
       this.partnerLine(sc.turns[0], true);
       this.memoryHello();
@@ -2928,7 +3438,7 @@
       this.finished = false;
       this.msgs = [];
       this.aiHistory = [];
-      this.aiContext = (contextTitle ? "当前阅读材料：" + contextTitle + "\n" + contextText + "\n\n" : "") + AI.wordsHint();
+      this.aiContext = (contextTitle ? "当前阅读材料：" + contextTitle + "\n" + contextText + "\n\n" : "") + AI.wordsHint() + Tasks.context();
       this.fromReader = !!(contextTitle || contextText);
       $("chatTools").classList.remove("hidden");
       $("btnHint").classList.add("hidden");
@@ -2980,7 +3490,7 @@
         "学生当前选中第 " + (this.readerIdx + 1) + " 句：“" + sel + "”" +
         (selZh ? "（中文：" + selZh + "）" : "") + "\n" +
         "请围绕这篇材料答疑、考词或讨论内容；学生用中文提问就用简体中文解释。" +
-        AI.wordsHint();
+        AI.wordsHint() + Tasks.context();
       this.fromReader = true;
       $("chatTools").classList.remove("hidden");
       $("btnHint").classList.remove("hidden");
@@ -3046,6 +3556,16 @@
       if (wantRead) {
         this.sys("🔊 好，这一句我再读一遍：", sel);
         this.speakAs(sel, after);
+        return true;
+      }
+      // 卡壳：把这句拆成两小步带读，而不是丢一大段解释
+      if (Repair.isStuck(msg) || /不会|卡住|怎么讲|帮帮我|说不上来/.test(m)) {
+        const line = Repair.offlineLine(sel);
+        const chips = line.parts.map(function (p) {
+          return '<span class="repair-chunk">' + esc(p) + "</span>";
+        }).join("");
+        this.sys("🪜 别急，这句拆成两半：" + chips + "<br>" + esc(line.zh), null);
+        this.speakAs(line.en, after);
         return true;
       }
       if (wantQuiz) {
@@ -3445,6 +3965,18 @@
         return false;
       }
 
+      // 卡住了（不会 / 卡住 / 怎么讲）：先拆句带读，而不是直接给答案
+      if (turn && /不会|卡住|卡了|怎么讲|帮帮我|说不上来|想不起/.test(m)) {
+        const model = turn.model || turn.en || "";
+        const line = Repair.offlineLine(model);
+        const chips = line.parts.map(function (p) {
+          return '<span class="repair-chunk">' + esc(p) + "</span>";
+        }).join("");
+        this.sys("🪜 卡住很正常，这句话拆成两小步：" + chips, null);
+        this.speakAs(line.en, function () { if (Ear.on) Ear.relax(); else Stage.listen(); });
+        return true;
+      }
+
       if (wantRepeat) {
         this.sys("🔁 再听一遍这一句：", turn.en);
         this.speakAs(turn.en, function () { if (Ear.on) Ear.relax(); });
@@ -3554,6 +4086,11 @@
       this.addMe(msg);
       $("chatText").value = "";
       Sf.hide();
+      // 卡壳修复：只回 um / I don't know / 说到一半断掉时，先拆句带说，不丢一段标准答案
+      if (!interrupted && Repair.isStuck(msg)) {
+        this.repairStep(turn);
+        return;
+      }
       const self = this;
       const token = this.token;
       const ratio = this.evaluate(msg, turn);
@@ -3610,6 +4147,23 @@
 
       if (praise) this.speakAs(praise, proceed);
       else setTimeout(proceed, 620);
+    },
+
+    /** 卡壳修复（离线）：把这一轮的示范句拆成两小步，先带读再让他自己说 */
+    repairStep: function (turn) {
+      const model = (turn && (turn.model || turn.en)) || "";
+      const line = Repair.offlineLine(model);
+      const chips = line.parts.map(function (p) {
+        return '<span class="repair-chunk">' + esc(p) + "</span>";
+      }).join("");
+      this.sys("🪜 卡一下没关系，我们拆成两小步：" + chips +
+        (model ? ' <button class="b-act" data-act="speak-text" data-text="' + attr(model) + '">🔊 整句</button>' : ""), null);
+      $("chatHintLine").textContent = "跟着念：先前半句，再后半句；念完再自己说一遍";
+      const self = this;
+      this.speakAs(line.en, function () {
+        self.sys("👂 轮到你了：照刚才的两小步说一遍，说错也没关系。", null);
+        if (Ear.on) Ear.relax(); else Stage.listen();
+      });
     },
 
     sendAI: function (msg, lang, interrupted) {
@@ -3814,6 +4368,8 @@
         "6) 如果对方的表达语法没错但不够地道，可以在最后单独一行以“[TRY: 更自然的英文说法]”的形式给一个更地道的英文句子（一行一个，最多一个）；正文里不要提这件事，也不要打断聊天节奏。没有可改进的就不加这一行。" +
         "7) 如果提示里给了学生正在学的生词，请在对话里自然地用上 1-2 个，不要罗列或解释。" +
         "8) 内容健康、适合青少年；不要索要真实姓名、住址、学校等隐私信息。" +
+        Repair.promptBlock() +
+        Placement.tutorBlock(profileLevel()) +
         Memory.prompt();
     },
 
@@ -3824,7 +4380,8 @@
       return "\n\n学生本机生词本里这几个词还没掌握，请在对话里自然地用上 1-2 个（不要罗列、不要说你在复习）：" +
         list.map(function (v) {
           const zh = String(v.zh || "").replace(/（[^）]*）/g, "").slice(0, 16);
-          return v.w + (zh ? "（" + zh + "）" : "");
+          const cause = SRS.weakLabel(v);
+          return v.w + (zh ? "（" + zh + "）" : "") + (cause ? "（上次错因：" + cause + "）" : "");
         }).join("、") + "。";
     },
 
@@ -4622,7 +5179,7 @@
       void card.offsetWidth;
       card.classList.add("shake");
       this.renderDiff(res);
-      // 错题沉淀：听写里没对上或拼错的实词，记进外教记忆小本本（最多 2 个）
+      // 错题沉淀：听写里没对上或拼错的实词，按错因记进记忆本（最多 2 个）
       let noted = 0;
       res.cells.forEach(function (c) {
         if (noted >= 2) return;
@@ -4630,7 +5187,11 @@
         const w = PatternCore.core(c.t);
         if (w.length < 2) return;
         const entry = dictLookup(w);
-        if (Memory.weakWord(w, entry ? entry.z : "", "听写")) noted++;
+        const causeId = Recall.classify("dictation", { written: c.a || "", target: c.t });
+        if (Memory.weakWord(w, entry ? entry.z : "", "听写", causeId)) {
+          noted++;
+          markWeakInVocab(w, causeId);
+        }
       });
     },
 
@@ -5017,6 +5578,17 @@
       this.renderHome();
     },
 
+    /** CEFR 快速定级后：选词填空与英汉配对都跟着换默认等级 */
+    setLevels: function (lv) {
+      if (!QuizCore.isLevel(lv)) return;
+      if (!this.data) this.load();
+      const level = String(lv).toUpperCase();
+      this.blankLv = level;
+      this.matchLv = level;
+      this.save();
+      if (this.data) this.renderHome();
+    },
+
     /* ---------------- 选词填空 ---------------- */
 
     buildBlankDeck: function (lv) {
@@ -5097,7 +5669,8 @@
           this.data.blank.correct++;
           s.correct++;
         } else {
-          Memory.weakWord(q.word, q.zh, "选词填空");
+          Memory.weakWord(q.word, q.zh, "选词填空", "meaning");
+          markWeakInVocab(q.word, "meaning");
         }
         this.save();
         $("qzBlankScore").textContent = "✓ " + s.correct;
@@ -5260,7 +5833,10 @@
       // 配错了：轻轻提示，记一条薄弱点，然后取消选中
       Sfx.soft();
       s.wrong++;
-      if (pair) Memory.weakWord(pair.w, pair.zh, "英汉配对");
+      if (pair) {
+        Memory.weakWord(pair.w, pair.zh, "英汉配对", "meaning");
+        markWeakInVocab(pair.w, "meaning");
+      }
       const doc = document;
       [
         doc.querySelector('#qzMatchLeft [data-i="' + s.selL + '"]'),
@@ -5496,6 +6072,10 @@
       State.settings.bilingual = !State.settings.bilingual;
       applySettings();
       if (currentView === "reader") Reader.rerender();
+      if (State.settings.bilingual && LadderMode.pref.on && LadderMode.pref.stage !== 2) {
+        toast("梯子模式「" + LadderMode.stage().short + "」会收起中文；切到「② 对照」才看得到");
+        return;
+      }
       toast(State.settings.bilingual ? "已显示中文对照" : "已隐藏中文对照");
     });
 
@@ -5551,6 +6131,25 @@
       else Reader.playAll();
     });
     $("btnStop").addEventListener("click", function () { Reader.stop(); });
+
+    // 梯子模式：开关 / 三阶切换 / 遮住英文听一遍
+    if ($("btnLadder")) {
+      $("btnLadder").addEventListener("click", function () {
+        LadderMode.setOn(!LadderMode.pref.on);
+      });
+    }
+    if ($("ladderSeg")) {
+      $("ladderSeg").addEventListener("click", function (e) {
+        const b = e.target.closest("button");
+        if (b && b.dataset.ls) LadderMode.setStage(b.dataset.ls);
+      });
+    }
+    if ($("btnBlindListen")) {
+      $("btnBlindListen").addEventListener("click", function () { Reader.toggleBlindListen(); });
+    }
+    if ($("btnRetellListen")) {
+      $("btnRetellListen").addEventListener("click", function () { Reader.toggleBlindListen(); });
+    }
 
     // 带着这篇文章和当前选中句去问外教
     if ($("btnAskTutor")) {
@@ -5627,7 +6226,9 @@
     });
 
     // 生词本
-    $("btnReview").addEventListener("click", function () { Flash.open(); });    $("btnShowMastered").addEventListener("click", function () {
+    $("btnReview").addEventListener("click", function () { Flash.open("card"); });
+    if ($("btnRecall")) $("btnRecall").addEventListener("click", function () { Flash.open("recall"); });
+    $("btnShowMastered").addEventListener("click", function () {
       State.showMastered = !State.showMastered;
       $("btnShowMastered").classList.toggle("on", State.showMastered);
       renderVocab();
@@ -5647,6 +6248,17 @@
       if (Flash.suppressClick) { Flash.suppressClick = false; return; }
       Flash.flip();
     });
+    if ($("btnRecallEar")) {
+      $("btnRecallEar").addEventListener("click", function (e) { e.stopPropagation(); Flash.earOnlyPlay(); });
+    }
+    if ($("flashRatings")) {
+      $("flashRatings").addEventListener("click", function (e) {
+        const b = e.target.closest("[data-rate]");
+        if (!b) return;
+        e.stopPropagation();
+        Flash.rate(b.dataset.rate);
+      });
+    }
     $("flashNext").addEventListener("click", function (e) { e.stopPropagation(); Flash.next(); });
     $("flashPrev").addEventListener("click", function (e) { e.stopPropagation(); Flash.prev(); });
     if ($("flashAgain")) $("flashAgain").addEventListener("click", function (e) { e.stopPropagation(); Flash.again(); });
@@ -5658,6 +6270,29 @@
     });
     $("flashMaster").addEventListener("click", function (e) { e.stopPropagation(); Flash.master(); });
     $("flashClose").addEventListener("click", function (e) { e.stopPropagation(); Flash.close(); });
+
+    // 🎯 CEFR 快速定级：设置页与对话页两个入口
+    if ($("btnPlacementStart")) $("btnPlacementStart").addEventListener("click", function () { Placing.start(); });
+    if ($("btnConvPlacement")) $("btnConvPlacement").addEventListener("click", function () { Placing.start(); });
+    if ($("btnConvApplySpeed")) $("btnConvApplySpeed").addEventListener("click", function () { applySuggestedSpeed(); });
+    if ($("placementMask")) {
+      $("placementMask").addEventListener("click", function (e) {
+        if (e.target === $("placementMask")) { Placing.close(); return; }
+        const t = e.target.closest("[data-pl]");
+        if (!t) return;
+        const act = t.dataset.pl;
+        if (act === "opt") Placing.choose(Number(t.dataset.i));
+        else if (act === "apply") Placing.apply();
+        else if (act === "retry") Placing.start();
+      });
+    }
+    if ($("plClose")) $("plClose").addEventListener("click", function () { Placing.close(); });
+    if ($("plQuit")) $("plQuit").addEventListener("click", function () { Placing.close(); });
+    if ($("plBack")) $("plBack").addEventListener("click", function () { Placing.back(); });
+
+    // 🎯 本轮小任务卡
+    if ($("btnTaskNext")) $("btnTaskNext").addEventListener("click", function () { Tasks.next(); });
+    if ($("btnTaskOff")) $("btnTaskOff").addEventListener("click", function () { Tasks.clear(); });
 
     // 对话
     $("btnSend").addEventListener("click", function () { Chat.send($("chatText").value); });
@@ -5951,6 +6586,8 @@
     }
     Memory.load();
     Memory.render();
+    cefrLevel = profileLevel() || cefrLevel;
+    Tasks.load();
     document.querySelectorAll("#tierSeg .seg-item").forEach(function (b) {
       b.classList.toggle("active", b.dataset.tier === currentTier);
     });
@@ -5958,6 +6595,9 @@
     renderLibrary();
     renderScenarios();
     renderVocab();
+    renderPlacementUI();
+    renderConvCefr();
+    renderTasks();
     Streak.render(false);
     Rec.refresh();
     syncAllSegs(false);
