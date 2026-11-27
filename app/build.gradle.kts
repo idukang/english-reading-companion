@@ -11,8 +11,8 @@ android {
         applicationId = "com.idukang.readingcompanion"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.5.0"
+        versionCode = 11
+        versionName = "1.6.0"
 
         // 只打包手机常用的两种架构：x86/x86_64 是模拟器用的，打进来只会让包更大
         ndk {

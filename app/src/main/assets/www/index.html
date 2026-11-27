@@ -51,7 +51,7 @@
         <span class="pz-jump-ico" aria-hidden="true">🧩</span>
         <span class="pz-jump-main">
           <b>句型闯关</b>
-          <span>看中文、听发音，把打散的词块拼回一句话</span>
+          <span>词块拼句、听写、选词填空、英汉配对，全部离线</span>
         </span>
         <span class="pz-jump-go" aria-hidden="true">›</span>
       </button>
@@ -150,6 +150,17 @@
 
       <div class="ai-card" id="aiCard"></div>
 
+      <div class="card mem-entry" id="memEntry">
+        <div class="card-head">
+          <h3>📓 外教记得你</h3>
+          <span class="pill">按档案</span>
+        </div>
+        <div class="mem-brief" id="memBrief">还没有记下什么。聊几句、做几道题，薄弱点和兴趣就会自己记进来。</div>
+        <div class="row wrap" style="margin-top:8px">
+          <button class="btn small ghost" data-act="goto-memory">查看 / 管理记忆</button>
+        </div>
+      </div>
+
       <div class="list" id="scenarioList"></div>
     </section>
 
@@ -192,6 +203,13 @@
     <!-- ================= 句型闯关 ================= -->
     <section class="view" id="view-pattern">
       <div id="pzHome">
+        <div class="seg qz-tabs" id="qzTabs">
+          <button class="seg-item active" data-qz="pattern">🧩 句型闯关</button>
+          <button class="seg-item" data-qz="blank">✍️ 选词填空</button>
+          <button class="seg-item" data-qz="match">🔗 英汉配对</button>
+        </div>
+
+        <div id="qzPatternPane">
         <div class="pz-hero">
           <div class="pz-hero-eyebrow">主动回忆 · 比反复看更记得住</div>
           <div class="pz-hero-title">句型闯关</div>
@@ -209,6 +227,41 @@
         </div>
         <div class="pz-levels" id="pzLevels"></div>
         <p class="tiny center pz-foot">过关只看有没有拼对，不限时间；进度、正确率和连对都按学习档案分开记，只存在本机。</p>
+        </div>
+
+        <div id="qzBlankPane" class="hidden">
+          <div class="pz-hero">
+            <div class="pz-hero-eyebrow">看句子 · 选出缺的那个词</div>
+            <div class="pz-hero-title">选词填空</div>
+            <div class="pz-hero-sub">按 CEFR 等级出题，四个同词性的词里选一个：语法都通顺，只能靠意思判断。全部离线。</div>
+            <div class="pz-stats" id="qzBlankStats"></div>
+            <div class="seg small qz-levels" id="qzBlankLevelSeg">
+              <button data-lv="A1" class="active">A1 入门</button>
+              <button data-lv="A2">A2 基础</button>
+              <button data-lv="B1">B1 进阶</button>
+              <button data-lv="B2">B2 高阶</button>
+            </div>
+            <button class="btn primary block" id="btnQzBlankStart">▶ 开始 10 题</button>
+            <p class="tiny center">词库和「按等级加词」共用，A1–B2 共 600 多词，挑不重复的题出。</p>
+          </div>
+        </div>
+
+        <div id="qzMatchPane" class="hidden">
+          <div class="pz-hero">
+            <div class="pz-hero-eyebrow">英文 ↔ 中文 · 配对消消乐</div>
+            <div class="pz-hero-title">英汉配对</div>
+            <div class="pz-hero-sub">每轮 5 组词：先点英文，再点对应的中文；配对成功会消去，配完可以再来一轮。</div>
+            <div class="pz-stats" id="qzMatchStats"></div>
+            <div class="seg small qz-levels" id="qzMatchLevelSeg">
+              <button data-lv="A1" class="active">A1 入门</button>
+              <button data-lv="A2">A2 基础</button>
+              <button data-lv="B1">B1 进阶</button>
+              <button data-lv="B2">B2 高阶</button>
+            </div>
+            <button class="btn primary block" id="btnQzMatchStart">▶ 开始一轮（5 组）</button>
+            <p class="tiny center">点错会轻轻提示，不扣分；提示音尊重「过关提示音」开关和手机静音。</p>
+          </div>
+        </div>
       </div>
 
       <div id="pzPlay" class="hidden">
@@ -271,6 +324,52 @@
           </div>
         </div>
       </div>
+
+      <!-- 选词填空 -->
+      <div id="qzBlankPlay" class="hidden">
+        <div class="pz-top">
+          <button class="icon-btn" id="qzBlankBack" aria-label="回到闯关列表">‹</button>
+          <div class="pz-top-main">
+            <div class="pz-top-name" id="qzBlankTitle">选词填空 · A1</div>
+            <div class="pz-top-sub" id="qzBlankProgress">第 1 / 10 题</div>
+          </div>
+          <div class="pz-streak" id="qzBlankScore">✓ 0</div>
+        </div>
+        <div class="pz-bar" aria-hidden="true"><i id="qzBlankBar"></i></div>
+        <div class="pz-card" id="qzBlankCard">
+          <div class="pz-prompt-label">选出缺的那个词</div>
+          <div class="qz-sentence" id="qzBlankSentence"></div>
+          <div class="qz-options" id="qzBlankOptions"></div>
+          <div class="pz-feedback hidden" id="qzBlankFeedback"></div>
+        </div>
+        <p class="tiny center pz-hintline" id="qzBlankHint">点一个词就判对错，不扣分。</p>
+      </div>
+
+      <!-- 英汉配对 -->
+      <div id="qzMatchPlay" class="hidden">
+        <div class="pz-top">
+          <button class="icon-btn" id="qzMatchBack" aria-label="回到闯关列表">‹</button>
+          <div class="pz-top-main">
+            <div class="pz-top-name" id="qzMatchTitle">英汉配对 · A1</div>
+            <div class="pz-top-sub" id="qzMatchProgress">还剩 5 对</div>
+          </div>
+          <div class="pz-streak" id="qzMatchScore">✓ 0</div>
+        </div>
+        <div class="qz-match-grid">
+          <div class="qz-col" id="qzMatchLeft"></div>
+          <div class="qz-col" id="qzMatchRight"></div>
+        </div>
+        <div class="qz-match-done hidden" id="qzMatchDone">
+          <div class="pz-win"><div class="pz-win-badge">✓</div>
+            <div class="pz-win-text"><b>全部配对成功！</b><span id="qzMatchDoneSub">这一轮 5 组都记住了</span></div>
+          </div>
+          <div class="row wrap qz-match-done-acts">
+            <button class="btn primary grow" id="btnQzMatchAgain">🔁 再来一轮</button>
+            <button class="btn ghost" id="btnQzMatchHome">回闯关首页</button>
+          </div>
+        </div>
+        <p class="tiny center pz-hintline" id="qzMatchHint">先点英文，再点对应的中文；配对成功会消去。</p>
+      </div>
     </section>
 
     <!-- ================= 生词本 ================= -->
@@ -286,6 +385,22 @@
           <button class="btn small" id="btnShowMastered">显示已掌握</button>
         </div>
       </div>
+      <div class="card cefr-card" id="cefrCard">
+        <div class="card-head">
+          <h3>🎯 按 CEFR 等级加词</h3>
+          <span class="pill">A1–B2</span>
+        </div>
+        <p class="hint">从分级高频词库里挑还没学过的词，一次 10 个，自动去重；只加到当前学习档案，不联网。</p>
+        <div class="seg small" id="cefrSeg">
+          <button data-lv="A1" class="active">A1 入门</button>
+          <button data-lv="A2">A2 基础</button>
+          <button data-lv="B1">B1 进阶</button>
+          <button data-lv="B2">B2 高阶</button>
+        </div>
+        <button class="btn primary small" id="btnCefrImport">＋ 加入 10 个 A1 词</button>
+        <p class="tiny" id="cefrLeft"></p>
+      </div>
+
       <div id="vocabList"></div>
       <div id="flashWrap" class="hidden">
         <div class="flash-card" id="flashCard">
@@ -434,6 +549,29 @@
         </div>
       </div>
 
+      <div class="card" id="memoryCard">
+        <div class="card-head">
+          <h3>📓 外教记忆小本本</h3>
+          <span class="pill ok">本机 · 按档案</span>
+        </div>
+        <p class="hint">外教会把这些记在心里：薄弱点、兴趣主题和口语偏好。配了 AI 接口时，这些要点会写进外教的提示词；离线对话开聊时也会体贴地提到。换档案就换成另一本。</p>
+        <div class="mem-list" id="memoryList"></div>
+        <div class="seg small" id="memTypeSeg">
+          <button data-mt="weak" class="active">🎯 薄弱点</button>
+          <button data-mt="interest">💡 兴趣</button>
+          <button data-mt="style">🗣️ 口语偏好</button>
+          <button data-mt="note">📌 其他</button>
+        </div>
+        <div class="row mem-add-row">
+          <input class="input grow" id="memInput" maxlength="60" placeholder="例如：总是忘记第三人称单数加 -s" autocomplete="off">
+          <button class="btn primary" id="btnMemAdd">添加</button>
+        </div>
+        <div class="row wrap">
+          <button class="btn ghost small" id="btnMemClear">清空本档案的记忆</button>
+        </div>
+        <p class="tiny" id="memHint"></p>
+      </div>
+
       <div class="card" id="aiSettings">
         <div class="card-head">
           <h3>🤖 AI 自由外教（可选）</h3>
@@ -514,7 +652,7 @@
     <div class="word-head">
       <div>
         <div class="word-big" id="wWord">word</div>
-        <div class="word-ipa" id="wIpa"></div>
+        <div class="word-ipa"><span id="wIpa"></span> <span class="cefr-tag hidden" id="wCefr"></span></div>
       </div>
       <button class="icon-btn" id="wClose" aria-label="关闭">×</button>
     </div>
@@ -611,9 +749,12 @@
 
 <script src="library.js"></script>
 <script src="dict.js"></script>
+<script src="cefr.js"></script>
 <script src="persona.js"></script>
 <script src="scenarios.js"></script>
 <script src="challenge.js"></script>
+<script src="quiz.js"></script>
+<script src="memory-book.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

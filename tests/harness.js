@@ -8,7 +8,7 @@ const path = require("path");
 const { JSDOM } = require("jsdom");
 
 const WWW = path.join(__dirname, "..", "app", "src", "main", "assets", "www");
-const SCRIPTS = ["library.js", "dict.js", "persona.js", "scenarios.js", "challenge.js", "app.js"];
+const SCRIPTS = ["library.js", "dict.js", "cefr.js", "persona.js", "scenarios.js", "challenge.js", "quiz.js", "memory-book.js", "app.js"];
 
 function read(file) {
   return fs.readFileSync(path.join(WWW, file), "utf8");

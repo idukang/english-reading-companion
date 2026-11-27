@@ -21,3 +21,6 @@ app/src/main/assets/silero_vad_v4.onnx
 app/src/main/assets/tts/*.onnx
 app/src/main/assets/tts/*.bin
 app/src/main/assets/tts/tts.json
+
+# 测试依赖（只在本地跑 npm test，不进 APK）
+node_modules/
