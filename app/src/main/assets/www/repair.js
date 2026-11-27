@@ -32,6 +32,8 @@ const Repair = {
     const s = String(text == null ? "" : text).trim();
     if (!s) return false;
     if (REPAIR_FILLERS.test(s)) return true;
+    // 说到一半不会说 / 不知道怎么表达：当成卡壳
+    if (/\b(i (?:can'?t|cannot|don'?t know how to) (?:say|explain|describe))\b/i.test(s)) return true;
     // 重复同一个词：I I I / the the the
     if (/^(\w+)(\s+\1){2,}[.!?…]*$/i.test(s)) return true;
     // 说到一半断掉：很短的句子 + 省略号

@@ -3559,7 +3559,7 @@
         return true;
       }
       // 卡壳：把这句拆成两小步带读，而不是丢一大段解释
-      if (Repair.isStuck(msg) || /不会|卡住|怎么讲|帮帮我|说不上来/.test(m)) {
+      if (Repair.isStuck(msg) || /不会|卡住|怎么讲|怎么说|怎么用英语|帮帮我|说不上来/.test(m)) {
         const line = Repair.offlineLine(sel);
         const chips = line.parts.map(function (p) {
           return '<span class="repair-chunk">' + esc(p) + "</span>";
@@ -3995,8 +3995,14 @@
         return true;
       }
       if (wantHelp) {
-        this.sys("🗣️ 这一轮可以这样回答：", turn.model);
-        this.speakAs("可以这样回答：" + (turn.model || turn.en), function () { if (Ear.on) Ear.relax(); });
+        const model = turn.model || turn.en || "";
+        const parts = Repair.chunks(model);
+        const chips = parts.map(function (p) {
+          return '<span class="repair-chunk">' + esc(p) + "</span>";
+        }).join("");
+        this.sys("🗣️ 这一轮分两小步说：" + chips, model);
+        $("chatHintLine").textContent = "跟着念一遍，再自己说一遍";
+        this.speakAs(model, function () { if (Ear.on) Ear.relax(); else Stage.listen(); });
         return true;
       }
       if (wantNext) {

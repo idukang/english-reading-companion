@@ -30,7 +30,7 @@ test("修复：提示词要求先鼓励再确认、拆两句块带读，不许�
 });
 
 test("修复：能认出 um / I don't know / 说到一半断掉 / 乱拼", function () {
-  ["um", "Um...", "hmm", "I don't know", "dunno", "not sure", "help", "...", "I want to...", "sdfghj"].forEach(function (s) {
+  ["um", "Um...", "hmm", "I don't know", "dunno", "not sure", "help", "...", "I want to...", "sdfghj", "I don't know how to say it"].forEach(function (s) {
     assert.equal(Repair.isStuck(s), true, "应算卡壳：" + s);
   });
   ["Yes", "No, thanks.", "I went to the park yesterday.", "Seven.", "Could you say that again?"].forEach(function (s) {
@@ -106,6 +106,19 @@ test("离线情景对话：只回一个 um 时先拆句带读，不会跳下一�
     assert.match(doc.getElementById("chatHintLine").textContent, /跟着念/);
     // 没有推进到下一秒台词：伙伴气泡只多了修复这一句系统提示
     assert.ok(stream.querySelectorAll(".bubble.partner").length <= before + 1);
+  });
+});
+
+test("离线情景对话：中文问「怎么回答」时也拆成小步带读", async function () {
+  await withApp(async function ({ win, doc }) {
+    h.clickSel(win, '[data-tab="conv"]');
+    h.click(win, doc.querySelector('#scenarioList [data-act="open-scenario"]'));
+    h.type(win, "#chatText", "这个怎么回答");
+    h.clickSel(win, "#btnSend");
+    const stream = doc.getElementById("chatStream");
+    assert.match(stream.textContent, /分两小步说/);
+    assert.ok(stream.querySelectorAll(".repair-chunk").length >= 1);
+    assert.match(doc.getElementById("chatHintLine").textContent, /跟着念/);
   });
 });
 
