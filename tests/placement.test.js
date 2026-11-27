@@ -175,6 +175,17 @@ test("设置页：全选最低分 → A1；返回上一题可以改答案后重�
   });
 });
 
+test("定级弹层：安卓返回键先关弹层，不乱跳页面", async function () {
+  await withApp(async function ({ win, doc }) {
+    h.clickSel(win, '[data-tab="settings"]');
+    h.clickSel(win, "#btnPlacementStart");
+    assert.equal(doc.getElementById("placementMask").classList.contains("hidden"), false);
+    assert.equal(win.App.handleBack(), "handled");
+    assert.equal(doc.getElementById("placementMask").classList.contains("hidden"), true);
+    assert.ok(doc.getElementById("view-settings").classList.contains("active"), "关弹层不应离开设置页");
+  });
+});
+
 test("任务卡：换一张会变、会写进本档案；关掉后回到默认提示", async function () {
   await withApp(async function ({ win, doc }) {
     h.clickSel(win, '[data-tab="conv"]');

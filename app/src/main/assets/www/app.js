@@ -6178,6 +6178,10 @@
       State.settings.notes = !State.settings.notes;
       applySettings();
       if (currentView === "reader") Reader.rerender();
+      if (State.settings.notes && LadderMode.pref.on && LadderMode.pref.stage !== 2) {
+        toast("梯子模式「" + LadderMode.stage().short + "」会收起讲解；切到「② 对照」才看得到");
+        return;
+      }
       toast(State.settings.notes ? "已显示句子讲解" : "已隐藏句子讲解");
     });
 
@@ -6544,6 +6548,7 @@
 
   const App = {
     handleBack: function () {
+      if ($("placementMask") && !$("placementMask").classList.contains("hidden")) { Placing.close(); return "handled"; }
       if (currentView === "reader") { Reader.close(); return "handled"; }
       if (currentView === "chat") { Chat.closeChat(); return "handled"; }
       if (currentView === "pattern" && Quiz.inPlay()) { Quiz.toHome(); return "handled"; }

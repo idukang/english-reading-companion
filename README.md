@@ -263,7 +263,7 @@ gradle :app:assembleDebug
 
 ```bash
 npm install    # 只装 jsdom（开发依赖，不进 APK）
-npm test       # 110 个用例：现有功能回归 + 句型闯关 + CEFR 加词 / 选词填空 / 英汉配对 / 记忆本 + 应用内更新
+npm test       # 111 个用例：现有功能回归 + 句型闯关 + CEFR 加词 / 选词填空 / 英汉配对 / 记忆本 + 应用内更新
                #            + 梯子模式 / CEFR 定级 / 小任务卡 / 主动回忆与错因分诊 / 卡壳修复
 ```
 
